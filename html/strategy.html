@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>交易决策系统 - 三重滤网</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+    :root {
+        --bg-color: #0b0e14;
+        --card-bg: rgba(22, 26, 37, 0.7);
+        --border-color: rgba(255, 255, 255, 0.08);
+        --text-main: #e2e8f0;
+        --text-muted: #94a3b8;
+        --primary: #3b82f6;
+        --primary-hover: #2563eb;
+        --success: #10b981;
+        --danger: #ef4444;
+        --warning: #f59e0b;
+        --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    }
+
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+        background-color: var(--bg-color);
+        background-image: 
+            radial-gradient(circle at 15% 20%, rgba(59, 130, 246, 0.12) 0%, transparent 40%),
+            radial-gradient(circle at 85% 80%, rgba(16, 185, 129, 0.12) 0%, transparent 40%);
+        color: var(--text-main);
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 40px 20px;
+    }
+
+    .container {
+        width: 100%;
+        max-width: 800px;
+    }
+
+    .header {
+        text-align: center;
+        margin-bottom: 40px;
+    }
+
+    .header h1 {
+        font-size: 32px;
+        font-weight: 700;
+        background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 12px;
+    }
+
+    .header p {
+        color: var(--text-muted);
+        font-size: 15px;
+    }
+
+    .glass-card {
+        background: var(--card-bg);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid var(--border-color);
+        border-radius: 24px;
+        box-shadow: var(--glass-shadow);
+        overflow: hidden;
+    }
+
+    .form-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .form-table th, .form-table td {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border-color);
+        text-align: left;
+    }
+
+    .form-table th {
+        font-weight: 600;
+        color: var(--text-muted);
+        width: 40%;
+        font-size: 15px;
+    }
+
+    .form-table td {
+        width: 60%;
+    }
+
+    .form-table tr:last-child th,
+    .form-table tr:last-child td {
+        border-bottom: none;
+    }
+
+    /* Custom Inputs */
+    select, input[type="number"] {
+        width: 100%;
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: var(--text-main);
+        padding: 12px 16px;
+        border-radius: 12px;
+        font-size: 15px;
+        outline: none;
+        transition: all 0.3s ease;
+        appearance: none;
+    }
+
+    select:focus, input[type="number"]:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    }
+
+    select option {
+        background: var(--bg-color);
+        color: var(--text-main);
+    }
+
+    /* Toggle Switch */
+    .toggle-switch {
+        position: relative;
+        display: inline-block;
+        width: 56px;
+        height: 30px;
+    }
+
+    .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+
+    .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(255, 255, 255, 0.1);
+        transition: .4s;
+        border-radius: 30px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .slider:before {
+        position: absolute;
+        content: "";
+        height: 22px;
+        width: 22px;
+        left: 3px;
+        bottom: 3px;
+        background-color: #fff;
+        transition: .4s;
+        border-radius: 50%;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+
+    input:checked + .slider {
+        background-color: var(--primary);
+    }
+
+    input:checked + .slider:before {
+        transform: translateX(26px);
+    }
+
+    /* Price Inputs Group */
+    .price-group {
+        display: flex;
+        gap: 12px;
+    }
+
+    .price-group input {
+        text-align: center;
+    }
+
+    /* Value Display */
+    .value-display {
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+    }
+
+    /* Result Area */
+    .result-row {
+        background: rgba(0, 0, 0, 0.2);
+    }
+
+    .result-status {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 18px;
+        font-weight: 600;
+    }
+
+    .status-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        color: white;
+        font-size: 16px;
+    }
+
+    .status-icon.success { background: var(--success); box-shadow: 0 0 15px rgba(16, 185, 129, 0.4); }
+    .status-icon.danger { background: var(--danger); box-shadow: 0 0 15px rgba(239, 68, 68, 0.4); }
+    .status-icon.warning { background: var(--warning); box-shadow: 0 0 15px rgba(245, 158, 11, 0.4); }
+
+    .reasons-list {
+        margin-top: 12px;
+        font-size: 14px;
+        color: var(--danger);
+        list-style: none;
+    }
+
+    .reasons-list li {
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .reasons-list li::before {
+        content: "•";
+    }
+
+    /* Animations */
+    @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+        100% { transform: scale(1); }
+    }
+
+    .animate-pulse {
+        animation: pulse 2s infinite;
+    }
+
+    /* Section Headers in Table */
+    .section-header {
+        background: rgba(255,255,255,0.02);
+        color: var(--primary) !important;
+        font-size: 13px !important;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        padding-top: 30px !important;
+        padding-bottom: 10px !important;
+    }
+
+    /* Tabs */
+    .tabs {
+        display: flex;
+        border-bottom: 1px solid var(--border-color);
+        background: rgba(0, 0, 0, 0.1);
+    }
+    .tab-btn {
+        flex: 1;
+        background: transparent;
+        border: none;
+        padding: 16px;
+        color: var(--text-muted);
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border-bottom: 2px solid transparent;
+        outline: none;
+    }
+    .tab-btn:hover {
+        color: var(--text-main);
+        background: rgba(255, 255, 255, 0.02);
+    }
+    .tab-btn.active {
+        color: var(--primary);
+        border-bottom-color: var(--primary);
+        background: rgba(59, 130, 246, 0.05);
+    }
+    .tab-content {
+        display: none;
+    }
+    .tab-content.active {
+        display: block;
+        animation: fadeIn 0.3s ease;
+    }
+
+</style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>交易决策系统</h1>
+        <p>简单三步：把握方向、找点位、定时机</p>
+    </div>
+
+    <div class="glass-card">
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('tab-triple', this)">三重滤网判断</button>
+            <button class="tab-btn" onclick="switchTab('tab-market', this)">盘面特征解析</button>
+        </div>
+
+        <div id="tab-triple" class="tab-content active">
+            <table class="form-table">
+                <tbody>
+                    <!-- 基础信息 -->
+                <tr>
+                    <th colspan="2" class="section-header">一、4小时K线 (大方向)</th>
+                </tr>
+                <tr>
+                    <th>方向</th>
+                    <td>
+                        <select id="direction" onchange="calculate()">
+                            <option value="long">多 (Long)</option>
+                            <option value="short">空 (Short)</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th>4H趋势</th>
+                    <td>
+                        <select id="trend4h" onchange="calculate()">
+                            <option value="up">上升 (高低点同步抬升)</option>
+                            <option value="down">下降 (高低点同步降低)</option>
+                            <option value="range">横盘震荡 (不建议操作)</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th>4H高点抬升</th>
+                    <td>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="hh4h" checked onchange="calculate()">
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th>4H低点抬升</th>
+                    <td>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="hl4h" checked onchange="calculate()">
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                </tr>
+
+                <!-- 1小时K线 -->
+                <tr>
+                    <th colspan="2" class="section-header">二、1小时K线 (关键区间)</th>
+                </tr>
+                <tr>
+                    <th>1H关键位类型</th>
+                    <td>
+                        <select id="level1h" onchange="calculate()">
+                            <option value="support">支撑 (潜在进场点)</option>
+                            <option value="resistance">阻力 (潜在减仓点)</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th>1H是否接近关键位</th>
+                    <td>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="near1h" checked onchange="calculate()">
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th>1H是否有趋势线/均线共振</th>
+                    <td>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="confluence1h" checked onchange="calculate()">
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                </tr>
+
+                <!-- 15分钟K线 -->
+                <tr>
+                    <th colspan="2" class="section-header">三、15分钟K线 (进场时机)</th>
+                </tr>
+                <tr>
+                    <th>15M吞没 / 反转信号</th>
+                    <td>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="engulf15m" checked onchange="calculate()">
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th>15M成交量放大</th>
+                    <td>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="vol15m" checked onchange="calculate()">
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th>15M突破确认</th>
+                    <td>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="break15m" checked onchange="calculate()">
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                </tr>
+
+
+
+                <!-- 交易计划 -->
+                <tr>
+                    <th colspan="2" class="section-header">五、交易计划 (风控)</th>
+                </tr>
+                <tr>
+                    <th>入场价</th>
+                    <td>
+                        <input type="number" id="entryPx" placeholder="入场" value="60000" oninput="calculate()">
+                    </td>
+                </tr>
+                <tr>
+                    <th>止损价</th>
+                    <td>
+                        <input type="number" id="slPx" placeholder="止损" value="59000" oninput="calculate()">
+                    </td>
+                </tr>
+                <tr>
+                    <th>目标价</th>
+                    <td>
+                        <input type="number" id="tpPx" placeholder="目标" value="62000" oninput="calculate()">
+                    </td>
+                </tr>
+                <tr>
+                    <th>R倍数 (盈亏比)</th>
+                    <td>
+                        <div id="rRatio" class="value-display" style="color: var(--primary);">0.00</div>
+                    </td>
+                </tr>
+
+                <!-- 最终结论 -->
+                <tr class="result-row">
+                    <th>允许开仓</th>
+                    <td>
+                        <div class="result-status" id="resultStatus">
+                            <div class="status-icon warning">?</div>
+                            <span>请完整填写参数</span>
+                        </div>
+                        <ul class="reasons-list" id="reasonsList"></ul>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        </div> <!-- End of tab-triple -->
+
+        <!-- Tab 2: 盘面特征解析 -->
+        <div id="tab-market" class="tab-content">
+            <table class="form-table">
+                <tbody>
+                    <tr>
+                        <th colspan="2" class="section-header" style="border-top: none;">盘面特征评分 (量价 & CVD)</th>
+                    </tr>
+                    <tr>
+                        <th>价格特征</th>
+                        <td>
+                            <select id="featPrice" onchange="calculate()">
+                                <option value="none">无明显特征</option>
+                                <option value="up">上升 (↑)</option>
+                                <option value="down">下降 (↓)</option>
+                                <option value="newHigh">创新高</option>
+                                <option value="newLow">创新低</option>
+                                <option value="range">横盘</option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>OI 特征</th>
+                        <td>
+                            <select id="featOI" onchange="calculate()">
+                                <option value="none">无明显特征</option>
+                                <option value="up">上升 / 新高 (↑)</option>
+                                <option value="down">下降 / 下跌 (↓)</option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>合约 CVD 特征</th>
+                        <td>
+                            <select id="featFutCvd" onchange="calculate()">
+                                <option value="none">横盘 / 未创新高低</option>
+                                <option value="up">上升 / 新高 (↑)</option>
+                                <option value="down">下降 / 新低 (↓)</option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>现货 CVD 特征</th>
+                        <td>
+                            <select id="featSpotCvd" onchange="calculate()">
+                                <option value="none">横盘 / 未创新高低</option>
+                                <option value="up">上升 (↑)</option>
+                                <option value="down">下降 (↓)</option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr id="featureResultRow" style="display: none;">
+                        <td colspan="2" style="padding: 0; border-bottom: none;">
+                            <div style="background: rgba(59, 130, 246, 0.05); border-left: 4px solid var(--primary); padding: 16px 24px; margin: 12px 24px; border-radius: 4px;">
+                                <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <div id="featTitle" style="font-weight: 700; font-size: 16px; color: var(--primary);">强多头</div>
+                                    <div id="featStars" style="color: #f59e0b; letter-spacing: 2px;">★★★★★</div>
+                                </div>
+                                <div id="featDesc" style="font-size: 14px; color: var(--text-main); margin-bottom: 12px; line-height: 1.6;">
+                                    说明...
+                                </div>
+                                <div style="font-size: 14px; font-weight: 600; color: var(--success); display: flex; align-items: center; gap: 8px;">
+                                    <span style="background: rgba(16, 185, 129, 0.2); padding: 4px 8px; border-radius: 4px; font-size: 12px;">交易提示</span>
+                                    <span id="featTrade">顺势做多</span>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div> <!-- End of tab-market -->
+    </div>
+</div>
+
+<script>
+    function switchTab(tabId, btnElement) {
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(tabId).classList.add('active');
+        btnElement.classList.add('active');
+    }
+
+    function calculate() {
+        const dir = document.getElementById('direction').value;
+        const trend4h = document.getElementById('trend4h').value;
+        const hh4h = document.getElementById('hh4h').checked;
+        const hl4h = document.getElementById('hl4h').checked;
+        
+        const level1h = document.getElementById('level1h').value;
+        const near1h = document.getElementById('near1h').checked;
+        const confluence1h = document.getElementById('confluence1h').checked;
+        
+        const engulf15m = document.getElementById('engulf15m').checked;
+        const vol15m = document.getElementById('vol15m').checked;
+        const break15m = document.getElementById('break15m').checked;
+
+        const fPrice = document.getElementById('featPrice').value;
+        const fOI = document.getElementById('featOI').value;
+        const fSpot = document.getElementById('featSpotCvd').value;
+        const fFut = document.getElementById('featFutCvd').value;
+
+        function evaluateMarketState(price, oi, spot, fut) {
+            // 第一层：趋势判断 (更新后12规则)
+            if (price === 'up' && oi === 'up' && fut === 'up' && spot === 'up') return { title: "健康上涨", stars: "★★★★★", desc: "增量资金+主动买盘推动，健康上涨", trade: "✅ 顺势做多" };
+            if (price === 'up' && oi === 'down' && fut === 'up' && spot === 'up') return { title: "空头回补上涨", stars: "★★★☆☆", desc: "空头回补或部分平仓推动上涨，仍偏强但持续性需观察", trade: "⚠️ 持多，不宜盲目追高" };
+            if (price === 'up' && oi === 'up' && fut === 'down' && spot === 'down') return { title: "疑似诱多", stars: "★★☆☆☆", desc: "新增持仓但买盘不支持，疑似诱多或空头建仓", trade: "⭐⭐⭐⭐ 做空关注" };
+            if (price === 'up' && oi === 'down' && fut === 'down' && spot === 'down') return { title: "买盘衰竭", stars: "★☆☆☆☆", desc: "买盘衰竭且持仓减少，上涨末期特征", trade: "⭐⭐⭐⭐ 做空关注" };
+            if (price === 'up' && oi === 'up' && fut === 'up' && spot === 'down') return { title: "杠杆推动上涨", stars: "★★★☆☆", desc: "杠杆资金推动上涨，但现货跟随不足", trade: "⚠️ 谨慎偏多，注意顶部风险" };
+            if (price === 'up' && oi === 'up' && fut === 'down' && spot === 'up') return { title: "现货主导上涨", stars: "★★★☆☆", desc: "现货强于合约，可能是健康吸筹，也可能短线震荡", trade: "🔍 等待确认" };
+
+            if (price === 'down' && oi === 'up' && fut === 'down' && spot === 'down') return { title: "健康下跌", stars: "★★★★★", desc: "增量资金+主动卖盘推动，健康下跌", trade: "✅ 顺势做空" };
+            if (price === 'down' && oi === 'down' && fut === 'down' && spot === 'down') return { title: "多头止损/释放", stars: "★★☆☆☆", desc: "多头止损/爆仓释放，下跌接近尾声概率增加", trade: "⚠️ 不宜追空" };
+            if (price === 'down' && oi === 'up' && fut === 'up' && spot === 'up') return { title: "逆势吸筹", stars: "★★★☆☆", desc: "下跌但主动买盘增强，可能吸筹", trade: "⭐⭐⭐⭐ 做多关注" };
+            if (price === 'down' && oi === 'down' && fut === 'up' && spot === 'up') return { title: "卖压衰竭", stars: "★★☆☆☆", desc: "清算导致下跌，卖压衰竭，容易反弹", trade: "⭐⭐⭐⭐ 做多关注" };
+            if (price === 'down' && oi === 'up' && fut === 'down' && spot === 'up') return { title: "疑似洗盘", stars: "★★★☆☆", desc: "合约偏空、现货承接，可能是洗盘", trade: "🔍 等待进一步确认" };
+            if (price === 'down' && oi === 'up' && fut === 'up' && spot === 'down') return { title: "方向不明", stars: "★★☆☆☆", desc: "多空分歧较大，方向不明", trade: "⏸️ 观望" };
+
+            // 第二层：背离判断 (顶部)
+            if (price === 'newHigh' && oi === 'up' && fut === 'up' && spot === 'none') return { title: "经典派发", stars: "★★★★☆", desc: "合约CVD新高，现货CVD未创新高<br>现货开始卖给追涨资金。", trade: "看空 / 警惕" };
+            if (price === 'newHigh' && oi === 'up' && fut === 'none' && spot === 'down') return { title: "最危险顶部", stars: "★★★★★", desc: "合约CVD未创新高，现货CVD下降<br>价格被硬拉，跟风资金越来越少。<br>常见于BTC/ETH/山寨冲顶", trade: "做空候选" };
+            if (price === 'newHigh' && oi === 'up' && fut === 'down' && spot === 'down') return { title: "强空信号", stars: "★★★★★", desc: "两个CVD都下降<br>上涨完全依赖空头回补或被动成交。<br>通常快见顶。", trade: "强力做空候选" };
+
+            // 第二层：背离判断 (底部)
+            if (price === 'newLow' && oi === 'up' && fut === 'down' && spot === 'none') return { title: "经典底部", stars: "★★★★☆", desc: "合约CVD新低，现货CVD未创新低<br>空头猛烈追空，现货开始接货。", trade: "看多 / 警惕" };
+            if (price === 'newLow' && oi === 'up' && fut === 'down' && spot === 'up') return { title: "黄金底", stars: "★★★★★", desc: "空头疯狂开仓<br>现货大资金吸筹", trade: "强力抄底候选" };
+            if (price === 'newLow' && oi === 'down' && (spot === 'down' || fut === 'down')) return { title: "衰竭底", stars: "★★★☆☆", desc: "没人玩了。<br>卖盘耗尽。<br>容易反弹。", trade: "轻仓抄底候选" };
+
+            // 第三层：横盘阶段
+            if (price === 'range' && oi === 'up' && fut === 'up' && spot === 'up') return { title: "横盘吸筹", stars: "★★★☆☆", desc: "有资金在建仓，未来会有大波动。", trade: "偏多" };
+            if (price === 'range' && oi === 'up' && fut === 'down' && spot === 'down') return { title: "横盘派发", stars: "★★★☆☆", desc: "有资金在出货，未来会有大波动。", trade: "偏空" };
+            if (price === 'range' && oi === 'up' && fut === 'down' && spot === 'up') return { title: "多空博弈", stars: "★★★☆☆", desc: "合约卖，现货买<br>主力吸筹概率较大", trade: "偏多观察" };
+            if (price === 'range' && oi === 'up' && fut === 'up' && spot === 'down') return { title: "拉高出货", stars: "★★★☆☆", desc: "合约买，现货卖<br>主力拉高出货概率较大", trade: "偏空观察" };
+
+            return null;
+        }
+
+        const featResult = evaluateMarketState(fPrice, fOI, fSpot, fFut);
+        const featRowEl = document.getElementById('featureResultRow');
+
+        if (featResult) {
+            featRowEl.style.display = 'table-row';
+            document.getElementById('featTitle').innerText = featResult.title;
+            document.getElementById('featStars').innerText = featResult.stars;
+            document.getElementById('featDesc').innerHTML = featResult.desc;
+            document.getElementById('featTrade').innerText = featResult.trade;
+        } else {
+            featRowEl.style.display = 'none';
+        }
+
+        const entryPx = parseFloat(document.getElementById('entryPx').value) || 0;
+        const slPx = parseFloat(document.getElementById('slPx').value) || 0;
+        const tpPx = parseFloat(document.getElementById('tpPx').value) || 0;
+
+        let rRatio = 0;
+        let validPrices = entryPx > 0 && slPx > 0 && tpPx > 0;
+        
+        if (validPrices) {
+            if (dir === 'long') {
+                const risk = entryPx - slPx;
+                const reward = tpPx - entryPx;
+                if (risk > 0) rRatio = reward / risk;
+            } else {
+                const risk = slPx - entryPx;
+                const reward = entryPx - tpPx;
+                if (risk > 0) rRatio = reward / risk;
+            }
+        }
+
+        const rEl = document.getElementById('rRatio');
+        if (validPrices && rRatio > 0) {
+            rEl.innerText = rRatio.toFixed(2);
+            rEl.style.color = rRatio >= 1.5 ? "var(--success)" : "var(--danger)";
+        } else {
+            rEl.innerText = "无效价格";
+            rEl.style.color = "var(--text-muted)";
+        }
+
+        let reasons = [];
+        let canOpen = true;
+
+        // 核心规则判断
+        if (dir === 'long') {
+            if (trend4h !== 'up') { canOpen = false; reasons.push("4H方向非上升趋势"); }
+            if (!hh4h) { canOpen = false; reasons.push("做多要求：4H高点必须抬升"); }
+            if (!hl4h) { canOpen = false; reasons.push("做多要求：4H低点必须抬升"); }
+            if (level1h !== 'support') { canOpen = false; reasons.push("做多要求：1H关键位需为支撑位"); }
+        } else {
+            if (trend4h !== 'down') { canOpen = false; reasons.push("4H方向非下降趋势"); }
+            if (hh4h) { canOpen = false; reasons.push("做空要求：4H高点应降低(不可抬升)"); }
+            if (hl4h) { canOpen = false; reasons.push("做空要求：4H低点应降低(不可抬升)"); }
+            if (level1h !== 'resistance') { canOpen = false; reasons.push("做空要求：1H关键位需为阻力位"); }
+        }
+
+        if (trend4h === 'range') {
+            canOpen = false; reasons.push("4H横盘震荡不建议操作");
+        }
+
+        if (!near1h) { canOpen = false; reasons.push("价格未接近1H关键位"); }
+        if (!confluence1h) {
+            // 共振作为加分项，这里强制要求，可修改
+            canOpen = false; reasons.push("缺乏1H趋势线/均线共振");
+        }
+
+        if (!engulf15m) { canOpen = false; reasons.push("15M尚未出现明确反转/吞没信号"); }
+        if (!vol15m) { canOpen = false; reasons.push("15M突破时成交量未见明显放大"); }
+        if (!break15m) { canOpen = false; reasons.push("15M关键结构突破尚未确认"); }
+
+        if (validPrices && rRatio < 1.5) {
+            canOpen = false; reasons.push("盈亏比 (R倍数) 小于 1.5，不符合风控要求");
+        }
+
+        const resultStatus = document.getElementById('resultStatus');
+        const reasonsList = document.getElementById('reasonsList');
+
+        if (canOpen) {
+            resultStatus.innerHTML = `
+                <div class="status-icon success animate-pulse">✓</div>
+                <span style="color: var(--success)">条件满足，允许开仓</span>
+            `;
+            reasonsList.innerHTML = "";
+            if (featResult) {
+                reasonsList.innerHTML = `<li style="color: var(--success);">🎯 强特征加持：${featResult.title} (${featResult.stars})</li>`;
+            }
+        } else {
+            resultStatus.innerHTML = `
+                <div class="status-icon danger">✕</div>
+                <span style="color: var(--danger)">条件不足，建议观望</span>
+            `;
+            
+            reasonsList.innerHTML = reasons.map(r => `<li>${r}</li>`).join('');
+            if (featResult) {
+                reasonsList.innerHTML += `<li style="color: var(--warning); margin-top: 8px; list-style-type: none;">⚠️ 提示：检测到极强盘面特征 (${featResult.title} ${featResult.stars})</li>`;
+            }
+        }
+    }
+
+    // 初始化计算一次
+    calculate();
+
+</script>
+
+</body>
+</html>

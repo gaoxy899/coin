@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BTC Futures Metrics Dashboard</title>
+    <style>
+        :root {
+            --bg: #131722;
+            --panel: #1e222d;
+            --border: #2a2e39;
+            --text: #d1d4dc;
+            --gold: #f0b90b;
+            --gray: #787b86;
+            --teal: #26a69a;
+            --crimson: #ef5350;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 16px;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        select {
+            background: var(--panel);
+            color: var(--text);
+            border: 1px solid var(--border);
+            padding: 8px 12px;
+            border-radius: 6px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .status {
+            font-size: 14px;
+            color: var(--gray);
+        }
+
+        .grid {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .current-value {
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .chart-container {
+            height: 300px;
+            width: 100%;
+        }
+
+        .orange-text { color: var(--gold); }
+        .gray-text { color: var(--gray); }
+        .teal-text { color: var(--teal); }
+    </style>
+    <!-- Lightweight Charts CDN -->
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>BTC Metrics Real-time Charts</h1>
+            <div class="controls">
+                <span id="statusLabel" class="status">正在加载数据...</span>
+                <select id="sourceSelect">
+                    <option value="1" selected>Binance USD-M Futures</option>
+                    <option value="2">Hyperliquid</option>
+                    <option value="3">Binance Spot</option>
+                </select>
+            </div>
+        </header>
+
+        <div class="grid">
+            <!-- Price Chart -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">BTC Price</div>
+                    <div id="priceVal" class="current-value orange-text">$-</div>
+                </div>
+                <div id="priceChart" class="chart-container"></div>
+            </div>
+
+            <!-- Open Interest Chart -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Open Interest (OI)</div>
+                    <div id="oiVal" class="current-value gray-text">-</div>
+                </div>
+                <div id="oiChart" class="chart-container"></div>
+            </div>
+
+            <!-- CVD Chart -->
+            <div class="card">
+                <style>
+                    .cvd-values-container {
+                        display: flex;
+                        gap: 20px;
+                        align-items: center;
+                    }
+                    @media (max-width: 600px) {
+                        .cvd-values-container {
+                            flex-direction: column;
+                            align-items: flex-start;
+                            gap: 5px;
+                        }
+                    }
+                </style>
+                <div class="card-header" style="flex-wrap: wrap; gap: 10px;">
+                    <div class="card-title">Cumulative Volume Delta (CVD)</div>
+                    <div class="cvd-values-container">
+                        <div id="cvdValContainer">
+                            <span id="cvdLabel" class="gray-text" style="font-size: 14px; margin-right: 4px;color: #26a69a;">Binance future:</span>
+                            <span id="cvdVal" class="current-value teal-text">-</span>
+                        </div>
+                        <div id="spotCvdContainer">
+                            <span class="gray-text" style="font-size: 14px; margin-right: 4px;color: #f0b90b;">Binance Spot:</span>
+                            <span id="spotCvdVal" class="current-value orange-text">-</span>
+                        </div>
+                    </div>
+                </div>
+                <div id="cvdChart" class="chart-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8080/api/metrics';
+
+        const chartOptions = {
+            layout: {
+                background: { type: 'solid', color: 'transparent' },
+                textColor: '#d1d4dc',
+            },
+            grid: {
+                vertLines: { color: '#2a2e39' },
+                horzLines: { color: '#2a2e39' },
+            },
+            timeScale: {
+                timeVisible: true,
+                secondsVisible: false,
+                rightOffset: 5,
+            },
+            rightPriceScale: {
+                borderVisible: false,
+            },
+            crosshair: {
+                mode: 0, // Normal mode
+            }
+        };
+
+        // Initialize Charts
+        const priceChart = LightweightCharts.createChart(document.getElementById('priceChart'), chartOptions);
+        const priceSeries = priceChart.addAreaSeries({
+            lineColor: '#f0b90b',
+            topColor: 'rgba(240, 185, 11, 0.3)',
+            bottomColor: 'rgba(240, 185, 11, 0.0)',
+            lineWidth: 2,
+        });
+
+        const oiChart = LightweightCharts.createChart(document.getElementById('oiChart'), chartOptions);
+        const oiSeries = oiChart.addAreaSeries({
+            lineColor: '#787b86',
+            topColor: 'rgba(120, 123, 134, 0.3)',
+            bottomColor: 'rgba(120, 123, 134, 0.0)',
+            lineWidth: 2,
+        });
+
+        const cvdChart = LightweightCharts.createChart(document.getElementById('cvdChart'), chartOptions);
+        const cvdSeries = cvdChart.addLineSeries({
+            color: '#26a69a',
+            lineWidth: 2,
+        });
+        const spotCvdSeries = cvdChart.addLineSeries({
+            color: '#f0b90b',
+            lineWidth: 2,
+        });
+
+        // Sync visible scale ranges across all charts
+        function syncCharts(src, targets) {
+            src.timeScale().subscribeVisibleLogicalRangeChange(range => {
+                targets.forEach(target => {
+                    target.timeScale().setVisibleLogicalRange(range);
+                });
+            });
+        }
+        syncCharts(priceChart, [oiChart, cvdChart]);
+        syncCharts(oiChart, [priceChart, cvdChart]);
+        syncCharts(cvdChart, [priceChart, oiChart]);
+
+        // Sync hover crosshair position
+        function syncCrosshairs(src, targets, seriesMap) {
+            src.subscribeCrosshairMove(param => {
+                if (!param.time) {
+                    targets.forEach(target => target.clearCrosshairPosition());
+                    return;
+                }
+                targets.forEach(target => {
+                    // Sync crosshair pointing details dynamically from logical coordinates
+                    target.setCrosshairPosition(0, param.time, seriesMap.get(target));
+                });
+            });
+        }
+
+        const seriesMap = new Map([
+            [priceChart, priceSeries],
+            [oiChart, oiSeries],
+            [cvdChart, cvdSeries]
+        ]);
+        syncCrosshairs(priceChart, [oiChart, cvdChart], seriesMap);
+        syncCrosshairs(oiChart, [priceChart, cvdChart], seriesMap);
+        syncCrosshairs(cvdChart, [priceChart, oiChart], seriesMap);
+
+        // Resize handler
+        window.addEventListener('resize', () => {
+            const width = document.getElementById('priceChart').clientWidth;
+            priceChart.resize(width, 300);
+            oiChart.resize(width, 300);
+            cvdChart.resize(width, 300);
+        });
+
+        async function refreshData() {
+            const sourceId = document.getElementById('sourceSelect').value;
+            const statusLabel = document.getElementById('statusLabel');
+
+            try {
+                // Fetch the selected source metrics
+                const response = await fetch(`${API_URL}?source_id=${sourceId}`);
+                if (!response.ok) throw new Error('API request failed');
+                const data = await response.json();
+
+                // If selected source is NOT Binance Spot (3), fetch Binance Spot CVD (3) in parallel
+                let spotData = [];
+                if (sourceId !== '3') {
+                    try {
+                        const spotResponse = await fetch(`${API_URL}?source_id=3`);
+                        if (spotResponse.ok) {
+                            spotData = await spotResponse.ok ? await spotResponse.json() : [];
+                        }
+                    } catch (e) {
+                        console.error('Error fetching Spot CVD:', e);
+                    }
+                }
+
+                if (data.length === 0) {
+                    statusLabel.innerText = '暂无可用数据';
+                    return;
+                }
+
+                // Transform data for charts
+                const priceData = data.map(d => ({ time: d.time, value: d.price }));
+                const oiData = data.map(d => ({ time: d.time, value: d.oi }));
+                const cvdData = data.map(d => ({ time: d.time, value: d.cvd }));
+
+                priceSeries.setData(priceData);
+                oiSeries.setData(oiData);
+                cvdSeries.setData(cvdData);
+
+                // Render spot CVD line if we fetched spot data (and spot is not the selected source itself)
+                if (sourceId !== '3' && spotData.length > 0) {
+                    const spotCvdData = spotData.map(d => ({ time: d.time, value: d.cvd }));
+                    spotCvdSeries.setData(spotCvdData);
+                    document.getElementById('spotCvdContainer').style.display = 'block';
+
+                    const latestSpot = spotData[spotData.length - 1];
+                    document.getElementById('spotCvdVal').innerText = latestSpot.cvd.toLocaleString(undefined, {maximumFractionDigits: 2});
+
+                    const spotCvdValEl = document.getElementById('spotCvdVal');
+                    if (latestSpot.cvd >= 0) {
+                        spotCvdValEl.style.color = '#f0b90b';
+                    } else {
+                        spotCvdValEl.style.color = '#ef5350';
+                    }
+                } else {
+                    // Selected source is Spot itself, hide/clear the duplicate comparison series
+                    spotCvdSeries.setData([]);
+                    document.getElementById('spotCvdContainer').style.display = 'none';
+                }
+
+                // Update UI Labels
+                document.getElementById('cvdLabel').innerText = sourceId === '3' ? 'Spot CVD:' : '合约 CVD:';
+
+                // Set current display values
+                const latest = data[data.length - 1];
+                document.getElementById('priceVal').innerText = `$${latest.price.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
+
+                // Spot doesn't have OI, so display N/A or hide gracefully
+                if (sourceId === '3') {
+                    document.getElementById('oiVal').innerText = 'N/A (现货无持仓)';
+                } else {
+                    document.getElementById('oiVal').innerText = latest.oi.toLocaleString(undefined, {maximumFractionDigits: 2});
+                }
+
+                document.getElementById('cvdVal').innerText = latest.cvd.toLocaleString(undefined, {maximumFractionDigits: 2});
+
+                // Update text colors for CVD direction dynamically
+                const cvdValEl = document.getElementById('cvdVal');
+                if (latest.cvd >= 0) {
+                    cvdValEl.className = 'current-value teal-text';
+                    cvdValEl.style.color = '';
+                } else {
+                    cvdValEl.className = 'current-value';
+                    cvdValEl.style.color = '#ef5350';
+                }
+
+                statusLabel.innerText = `最后更新: ${new Date().toLocaleTimeString()}`;
+            } catch (err) {
+                console.error(err);
+                statusLabel.innerText = '连接 API 失败';
+            }
+        }
+
+        // Initialize and setup handlers
+        document.getElementById('sourceSelect').addEventListener('change', refreshData);
+        refreshData();
+        setInterval(refreshData, 30000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>BTC VWAP OI CVD Score Panel</title>
+<style>
+body {
+  font-family: Arial;
+  background: #0b0f14;
+  color: #e6edf3;
+  margin: 0;
+  padding: 20px;
+}
+
+h2 { margin-bottom: 10px; }
+
+.container {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.card {
+  background: #111823;
+  padding: 15px;
+  border-radius: 10px;
+}
+
+.score {
+  font-size: 40px;
+  font-weight: bold;
+}
+
+.state {
+  font-size: 18px;
+  margin-top: 5px;
+}
+
+.green { color: #00c076; }
+.red { color: #ff4d4f; }
+.yellow { color: #f5c542; }
+.gray { color: #9aa4af; }
+
+button {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #1f2a37;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+</style>
+</head>
+
+<body>
+
+<h2>BTC VWAP + OI + CVD Score Panel</h2>
+
+<div class="container">
+
+  <div class="card">
+    <div>VWAP Score</div>
+    <div class="score" id="vwapScore">0</div>
+  </div>
+
+  <div class="card">
+    <div>OI Score</div>
+    <div class="score" id="oiScore">0</div>
+  </div>
+
+  <div class="card">
+    <div>Spot CVD Score</div>
+    <div class="score" id="spotScore">0</div>
+  </div>
+
+  <div class="card">
+    <div>Contract CVD Score</div>
+    <div class="score" id="contractScore">0</div>
+  </div>
+
+</div>
+
+<div class="card" style="margin-top:12px;">
+  <div>Total Score</div>
+  <div class="score" id="totalScore">0</div>
+  <div class="state" id="stateText">Neutral</div>
+
+  <button onclick="simulate()">Simulate Update</button>
+</div>
+
+<script>
+
+// ====== 核心评分逻辑 ======
+function calcState(total) {
+  if (total >= 5) return ["STRONG LONG", "green"];
+  if (total >= 2) return ["LONG BIAS", "green"];
+  if (total >= -1) return ["NEUTRAL", "gray"];
+  if (total >= -4) return ["SHORT BIAS", "yellow"];
+  return ["STRONG SHORT", "red"];
+}
+
+// ====== 模拟数据（后面可替换API） ======
+function simulate() {
+
+  // VWAP score (-2 ~ 2)
+  let vwap = Math.floor(Math.random() * 5) - 2;
+
+  // OI score
+  let oi = Math.floor(Math.random() * 5) - 2;
+
+  // Spot CVD
+  let spot = Math.floor(Math.random() * 5) - 2;
+
+  // Contract CVD
+  let contract = Math.floor(Math.random() * 5) - 2;
+
+  let total = vwap + oi + spot + contract;
+
+  document.getElementById("vwapScore").innerText = vwap;
+  document.getElementById("oiScore").innerText = oi;
+  document.getElementById("spotScore").innerText = spot;
+  document.getElementById("contractScore").innerText = contract;
+
+  document.getElementById("totalScore").innerText = total;
+
+  let [state, color] = calcState(total);
+
+  let el = document.getElementById("stateText");
+  el.innerText = state;
+  el.className = "state " + color;
+}
+
+// 初始化
+simulate();
+
+</script>
+
+</body>
+</html>
