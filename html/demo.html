@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>BTC Dashboard</title>
+
+<style>
+:root{
+    --bg:#131722;
+    --panel:#1e222d;
+    --border:#2a2e39;
+    --text:#d1d4dc;
+    --green:#26a69a;
+    --red:#ef5350;
+    --yellow:#f0b90b;
+}
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+
+.container{
+    width:min(1200px,95%);
+    margin:30px auto;
+}
+
+.clock{
+    text-align:center;
+    font-size:90px;
+    font-weight:700;
+}
+
+.date{
+    text-align:center;
+    opacity:.7;
+    margin-bottom:30px;
+}
+
+.grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(250px,1fr));
+    gap:16px;
+}
+
+@media (min-width: 800px) {
+    .grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
+
+.card{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:20px;
+}
+
+.label{
+    font-size:14px;
+    opacity:.7;
+}
+
+.value{
+    margin-top:10px;
+    font-size:34px;
+    font-weight:700;
+}
+
+.green{
+    color:var(--green);
+}
+
+.red{
+    color:var(--red);
+}
+
+.yellow{
+    color:var(--yellow);
+}
+
+.section{
+    margin-top:25px;
+}
+
+.chart{
+    height:220px;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:10px;
+}
+
+canvas{
+    width:100%;
+    height:200px;
+}
+
+.footer{
+    margin-top:15px;
+    text-align:center;
+    opacity:.6;
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+    <div id="clock" class="clock">00:00:00</div>
+    <div id="date" class="date"></div>
+
+    <div class="grid">
+
+        <div class="card">
+            <div class="label">BTC Price</div>
+            <div id="price" class="value">$0</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Funding Rate</div>
+            <div id="funding" class="value yellow">--</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Session CVD</div>
+            <div id="cvd" class="value">0</div>
+        </div>
+
+        <div class="card">
+            <div class="label">10% Book Delta</div>
+            <div id="bookDelta" class="value">0</div>
+        </div>
+
+    </div>
+
+    <div class="section" style="display: flex; flex-direction: column; gap: 16px;">
+
+        <div class="chart" style="height: auto;">
+            <div class="label" style="margin-bottom: 10px; font-weight: bold; text-align: center;">BTC Price</div>
+            <canvas id="priceChart"></canvas>
+        </div>
+
+        <div class="chart" style="height: auto;">
+            <div class="label" style="margin-bottom: 10px; font-weight: bold; text-align: center;">Session CVD</div>
+            <canvas id="cvdChart"></canvas>
+        </div>
+
+        <div class="chart" style="height: auto;">
+            <div class="label" style="margin-bottom: 10px; font-weight: bold; text-align: center;">Open Interest (OI)</div>
+            <canvas id="oiChart"></canvas>
+        </div>
+
+    </div>
+
+    <div class="footer">
+        Hyperliquid BTC Perp Dashboard
+    </div>
+
+</div>
+
+<script>
+
+let cvd = 0;
+let tradeCount = 0;
+let bookDeltaSum = 0;
+let bookDeltaCount = 0;
+let currentPrice = 0;
+let currentOI = 0;
+
+
+
+function updateClock(){
+
+    const now = new Date();
+
+    document.getElementById("clock").innerText =
+        now.toLocaleTimeString("zh-CN",{hour12:false});
+
+    document.getElementById("date").innerText =
+        now.toLocaleDateString(
+            "zh-CN",
+            {
+                year:"numeric",
+                month:"long",
+                day:"numeric",
+                weekday:"long"
+            }
+        );
+}
+
+setInterval(updateClock,1000);
+updateClock();
+
+function createChart(canvasId, color) {
+    const canvas = document.getElementById(canvasId);
+    const ctx = canvas.getContext("2d");
+    const data = [];
+
+    function resizeCanvas() {
+        canvas.width = canvas.offsetWidth;
+        canvas.height = 200;
+        drawChart();
+    }
+    resizeCanvas();
+    window.addEventListener("resize", resizeCanvas);
+
+    function drawChart() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (data.length < 2) return;
+
+        const min = Math.min(...data);
+        const max = Math.max(...data);
+        const range = max - min || 1;
+
+        ctx.beginPath();
+        data.forEach((v, i) => {
+            const x = i * canvas.width / (data.length - 1);
+            const y = canvas.height - ((v - min) / range) * canvas.height;
+
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        });
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+
+    function push(value) {
+        data.push(value);
+        drawChart();
+    }
+
+    return { push };
+}
+
+const priceChart = createChart("priceChart", "#d1d4dc");
+const cvdChart = createChart("cvdChart", "#26a69a");
+const oiChart = createChart("oiChart", "#f0b90b");
+
+async function loadMeta(){
+
+    try{
+
+        const res = await fetch(
+            "https://api.hyperliquid.xyz/info",
+            {
+                method:"POST",
+                headers:{
+                    "Content-Type":"application/json"
+                },
+                body:JSON.stringify({
+                    type:"metaAndAssetCtxs"
+                })
+            }
+        );
+
+        const json = await res.json();
+
+        const meta = json[0];
+        const assetCtxs = json[1];
+
+        const btcIndex =
+            meta.universe.findIndex(
+                x=>x.name==="BTC"
+            );
+
+        const btc = btcIndex !== -1 ? assetCtxs[btcIndex] : undefined;
+
+        if(btc){
+            currentPrice = Number(btc.markPx);
+            currentOI = Number(btc.openInterest);
+
+            document.getElementById("price").innerText =
+                "$"+currentPrice.toLocaleString();
+
+            document.getElementById("funding").innerText =
+                (
+                    Number(btc.funding)*100
+                ).toFixed(4)+"%";
+        }
+
+    }catch(err){
+        console.error(err);
+    }
+}
+
+setInterval(loadMeta,10000);
+loadMeta();
+
+function connectTrades(){
+
+    const ws =
+    new WebSocket(
+        "wss://api.hyperliquid.xyz/ws"
+    );
+
+    ws.onopen = ()=>{
+
+        ws.send(JSON.stringify({
+            method:"subscribe",
+            subscription:{
+                type:"trades",
+                coin:"BTC"
+            }
+        }));
+
+        ws.send(JSON.stringify({
+            method:"subscribe",
+            subscription:{
+                type:"l2Book",
+                coin:"BTC"
+            }
+        }));
+
+    };
+
+    ws.onmessage = (event)=>{
+
+        try{
+
+            const msg = JSON.parse(event.data);
+
+            if(!msg.channel || !msg.data) return;
+
+            if (msg.channel === "trades" && Array.isArray(msg.data)) {
+                msg.data.forEach(trade=>{
+                    const size = Number(trade.sz || trade.size || 0);
+                    const side = trade.side || "";
+
+                    if(side === "B") cvd += size;
+                    else if(side === "A") cvd -= size;
+                });
+
+                document.getElementById("cvd").innerText = cvd.toFixed(2);
+
+            } else if (msg.channel === "l2Book" && msg.data.levels) {
+                const bids = msg.data.levels[0];
+                const asks = msg.data.levels[1];
+
+                if (bids && asks && bids.length > 0 && asks.length > 0) {
+                    const highestBid = Number(bids[0].px);
+                    const lowestAsk = Number(asks[0].px);
+                    const midPrice = (highestBid + lowestAsk) / 2;
+
+                    const lowerBound = midPrice * 0.9;
+                    const upperBound = midPrice * 1.1;
+
+                    let bidSz = 0;
+                    for (const b of bids) {
+                        if (Number(b.px) >= lowerBound) bidSz += Number(b.sz);
+                    }
+
+                    let askSz = 0;
+                    for (const a of asks) {
+                        if (Number(a.px) <= upperBound) askSz += Number(a.sz);
+                    }
+
+                    const diff = bidSz - askSz;
+                    bookDeltaSum += diff;
+                    bookDeltaCount++;
+                }
+            }
+
+        }catch(e){
+            console.error(e);
+        }
+    };
+
+    ws.onclose = ()=>{
+
+        setTimeout(
+            connectTrades,
+            3000
+        );
+    };
+}
+
+connectTrades();
+
+setInterval(() => {
+    cvdChart.push(cvd);
+    if (currentOI > 0) oiChart.push(currentOI);
+    if (currentPrice > 0) priceChart.push(currentPrice);
+}, 60000);
+
+setTimeout(() => {
+    cvdChart.push(cvd);
+    if (currentOI > 0) oiChart.push(currentOI);
+    if (currentPrice > 0) priceChart.push(currentPrice);
+}, 2000);
+
+setInterval(() => {
+    if (bookDeltaCount > 0) {
+        const avgDiff = bookDeltaSum / bookDeltaCount;
+        const diffEl = document.getElementById("bookDelta");
+        if (diffEl) {
+            diffEl.innerText = avgDiff > 0 ? "+" + avgDiff.toFixed(2) : avgDiff.toFixed(2);
+            diffEl.className = "value " + (avgDiff > 0 ? "green" : (avgDiff < 0 ? "red" : ""));
+        }
+        bookDeltaSum = 0;
+        bookDeltaCount = 0;
+    }
+}, 60000);
+
+</script>
+
+</body>
+</html>

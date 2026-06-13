@@ -1,10 +1,10 @@
 <!DOCTYPE html>
+
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-
-<title>BTC Dashboard</title>
+<title>Crypto Dashboard</title>
 
 <style>
 :root{
@@ -15,6 +15,7 @@
     --green:#26a69a;
     --red:#ef5350;
     --yellow:#f0b90b;
+    --muted:#787b86;
 }
 
 *{
@@ -27,53 +28,57 @@ body{
     background:var(--bg);
     color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    min-height:100vh;
+    display:flex;
+    justify-content:center;
+    align-items:center;
 }
 
 .container{
     width:min(1200px,95%);
-    margin:30px auto;
 }
 
 .clock{
-    text-align:center;
-    font-size:90px;
+    font-size:clamp(60px,10vw,120px);
     font-weight:700;
+    text-align:center;
+    margin-bottom:10px;
 }
 
 .date{
     text-align:center;
-    opacity:.7;
-    margin-bottom:30px;
+    color:var(--muted);
+    margin-bottom:40px;
 }
 
 .grid{
     display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(250px,1fr));
-    gap:16px;
-}
-
-@media (min-width: 800px) {
-    .grid {
-        grid-template-columns: repeat(4, 1fr);
-    }
+    grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+    gap:20px;
 }
 
 .card{
     background:var(--panel);
     border:1px solid var(--border);
     border-radius:12px;
-    padding:20px;
+    padding:24px;
 }
 
 .label{
+    color:var(--muted);
     font-size:14px;
-    opacity:.7;
 }
 
 .value{
-    margin-top:10px;
-    font-size:34px;
+    font-size:40px;
+    margin-top:12px;
     font-weight:700;
+}
+
+.change{
+    margin-top:10px;
+    font-size:18px;
+    font-weight:600;
 }
 
 .green{
@@ -88,96 +93,68 @@ body{
     color:var(--yellow);
 }
 
-.section{
-    margin-top:25px;
-}
-
-.chart{
-    height:220px;
-    background:var(--panel);
-    border:1px solid var(--border);
-    border-radius:12px;
-    padding:10px;
-}
-
-canvas{
-    width:100%;
-    height:200px;
-}
-
 .footer{
-    margin-top:15px;
     text-align:center;
-    opacity:.6;
+    margin-top:25px;
+    color:var(--muted);
+    font-size:13px;
 }
 </style>
+
+<script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+
 </head>
+
 <body>
 
 <div class="container">
 
-    <div id="clock" class="clock">00:00:00</div>
-    <div id="date" class="date"></div>
+```
+<div id="clock" class="clock">00:00:00</div>
 
-    <div class="grid">
+<div id="date" class="date"></div>
 
-        <div class="card">
-            <div class="label">BTC Price</div>
-            <div id="price" class="value">$0</div>
-        </div>
+<div class="grid">
 
-        <div class="card">
-            <div class="label">Funding Rate</div>
-            <div id="funding" class="value yellow">--</div>
-        </div>
-
-        <div class="card">
-            <div class="label">Session CVD</div>
-            <div id="cvd" class="value">0</div>
-        </div>
-
-        <div class="card">
-            <div class="label">10% Book Delta</div>
-            <div id="bookDelta" class="value">0</div>
-        </div>
-
+    <div class="card">
+        <div class="label">BTC</div>
+        <div id="btcPrice" class="value">$0</div>
+        <div id="btcChange" class="change">--</div>
     </div>
 
-    <div class="section" style="display: flex; flex-direction: column; gap: 16px;">
-
-        <div class="chart" style="height: auto;">
-            <div class="label" style="margin-bottom: 10px; font-weight: bold; text-align: center;">BTC Price</div>
-            <canvas id="priceChart"></canvas>
-        </div>
-
-        <div class="chart" style="height: auto;">
-            <div class="label" style="margin-bottom: 10px; font-weight: bold; text-align: center;">Session CVD</div>
-            <canvas id="cvdChart"></canvas>
-        </div>
-
-        <div class="chart" style="height: auto;">
-            <div class="label" style="margin-bottom: 10px; font-weight: bold; text-align: center;">Open Interest (OI)</div>
-            <canvas id="oiChart"></canvas>
-        </div>
-
+    <div class="card">
+        <div class="label">ETH</div>
+        <div id="ethPrice" class="value">$0</div>
+        <div id="ethChange" class="change">--</div>
     </div>
 
-    <div class="footer">
-        Hyperliquid BTC Perp Dashboard
+    <div class="card">
+        <div class="label">Fear & Greed</div>
+        <div id="fearValue" class="value yellow">--</div>
+        <div id="fearText" class="change">Loading...</div>
     </div>
 
 </div>
 
+<div class="chart-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 20px;">
+    <div class="card" style="padding: 16px;">
+        <div class="label" style="margin-bottom: 10px;">BTC 走势 (24H)</div>
+        <div id="btcChart" style="height: 300px; width: 100%;"></div>
+    </div>
+    <div class="card" style="padding: 16px;">
+        <div class="label" style="margin-bottom: 10px;">ETH 走势 (24H)</div>
+        <div id="ethChart" style="height: 300px; width: 100%;"></div>
+    </div>
+</div>
+
+<div class="footer">
+    <div id="updateTime">Waiting...</div>
+</div>
+```
+
+</div>
+
 <script>
-
-let cvd = 0;
-let tradeCount = 0;
-let bookDeltaSum = 0;
-let bookDeltaCount = 0;
-let currentPrice = 0;
-let currentOI = 0;
-
-
 
 function updateClock(){
 
@@ -198,221 +175,169 @@ function updateClock(){
         );
 }
 
-setInterval(updateClock,1000);
-updateClock();
+function setChange(el,value){
 
-function createChart(canvasId, color) {
-    const canvas = document.getElementById(canvasId);
-    const ctx = canvas.getContext("2d");
-    const data = [];
+    const num = Number(value);
 
-    function resizeCanvas() {
-        canvas.width = canvas.offsetWidth;
-        canvas.height = 200;
-        drawChart();
-    }
-    resizeCanvas();
-    window.addEventListener("resize", resizeCanvas);
+    el.innerText =
+        `${num >= 0 ? "▲" : "▼"} ${num.toFixed(2)}%`;
 
-    function drawChart() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        if (data.length < 2) return;
-
-        const min = Math.min(...data);
-        const max = Math.max(...data);
-        const range = max - min || 1;
-
-        ctx.beginPath();
-        data.forEach((v, i) => {
-            const x = i * canvas.width / (data.length - 1);
-            const y = canvas.height - ((v - min) / range) * canvas.height;
-
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-        });
-
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-    }
-
-    function push(value) {
-        data.push(value);
-        drawChart();
-    }
-
-    return { push };
+    el.className =
+        "change " + (num >= 0 ? "green" : "red");
 }
 
-const priceChart = createChart("priceChart", "#d1d4dc");
-const cvdChart = createChart("cvdChart", "#26a69a");
-const oiChart = createChart("oiChart", "#f0b90b");
+async function loadCrypto(){
 
-async function loadMeta(){
+    const res = await fetch(
+        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true"
+    );
+
+    const data = await res.json();
+
+    document.getElementById("btcPrice").innerText =
+        "$" + data.bitcoin.usd.toLocaleString();
+
+    document.getElementById("ethPrice").innerText =
+        "$" + data.ethereum.usd.toLocaleString();
+
+    setChange(
+        document.getElementById("btcChange"),
+        data.bitcoin.usd_24h_change
+    );
+
+    setChange(
+        document.getElementById("ethChange"),
+        data.ethereum.usd_24h_change
+    );
+}
+
+async function loadFearGreed(){
 
     try{
 
         const res = await fetch(
-            "https://api.hyperliquid.xyz/info",
-            {
-                method:"POST",
-                headers:{
-                    "Content-Type":"application/json"
-                },
-                body:JSON.stringify({
-                    type:"metaAndAssetCtxs"
-                })
-            }
+            "https://api.alternative.me/fng/?limit=1"
         );
 
         const json = await res.json();
 
-        const meta = json[0];
-        const assetCtxs = json[1];
+        const item = json.data[0];
 
-        const btcIndex =
-            meta.universe.findIndex(
-                x=>x.name==="BTC"
-            );
+        document.getElementById("fearValue")
+            .innerText = item.value;
 
-        const btc = btcIndex !== -1 ? assetCtxs[btcIndex] : undefined;
+        document.getElementById("fearText")
+            .innerText = item.value_classification;
 
-        if(btc){
-            currentPrice = Number(btc.markPx);
-            currentOI = Number(btc.openInterest);
-
-            document.getElementById("price").innerText =
-                "$"+currentPrice.toLocaleString();
-
-            document.getElementById("funding").innerText =
-                (
-                    Number(btc.funding)*100
-                ).toFixed(4)+"%";
-        }
-
-    }catch(err){
-        console.error(err);
+    }catch(e){
+        console.error(e);
     }
 }
 
-setInterval(loadMeta,10000);
-loadMeta();
+async function refresh(){
 
-function connectTrades(){
+    try{
 
-    const ws =
-    new WebSocket(
-        "wss://api.hyperliquid.xyz/ws"
-    );
+        await Promise.all([
+            loadCrypto(),
+            loadFearGreed(),
+            loadChartData()
+        ]);
 
-    ws.onopen = ()=>{
+        document.getElementById("updateTime")
+            .innerText =
+            "Last Update: " +
+            new Date().toLocaleTimeString();
 
-        ws.send(JSON.stringify({
-            method:"subscribe",
-            subscription:{
-                type:"trades",
-                coin:"BTC"
-            }
-        }));
+    }catch(e){
 
-        ws.send(JSON.stringify({
-            method:"subscribe",
-            subscription:{
-                type:"l2Book",
-                coin:"BTC"
-            }
-        }));
-
-    };
-
-    ws.onmessage = (event)=>{
-
-        try{
-
-            const msg = JSON.parse(event.data);
-
-            if(!msg.channel || !msg.data) return;
-
-            if (msg.channel === "trades" && Array.isArray(msg.data)) {
-                msg.data.forEach(trade=>{
-                    const size = Number(trade.sz || trade.size || 0);
-                    const side = trade.side || "";
-
-                    if(side === "B") cvd += size;
-                    else if(side === "A") cvd -= size;
-                });
-
-                document.getElementById("cvd").innerText = cvd.toFixed(2);
-
-            } else if (msg.channel === "l2Book" && msg.data.levels) {
-                const bids = msg.data.levels[0];
-                const asks = msg.data.levels[1];
-
-                if (bids && asks && bids.length > 0 && asks.length > 0) {
-                    const highestBid = Number(bids[0].px);
-                    const lowestAsk = Number(asks[0].px);
-                    const midPrice = (highestBid + lowestAsk) / 2;
-
-                    const lowerBound = midPrice * 0.9;
-                    const upperBound = midPrice * 1.1;
-
-                    let bidSz = 0;
-                    for (const b of bids) {
-                        if (Number(b.px) >= lowerBound) bidSz += Number(b.sz);
-                    }
-
-                    let askSz = 0;
-                    for (const a of asks) {
-                        if (Number(a.px) <= upperBound) askSz += Number(a.sz);
-                    }
-
-                    const diff = bidSz - askSz;
-                    bookDeltaSum += diff;
-                    bookDeltaCount++;
-                }
-            }
-
-        }catch(e){
-            console.error(e);
-        }
-    };
-
-    ws.onclose = ()=>{
-
-        setTimeout(
-            connectTrades,
-            3000
-        );
-    };
+        document.getElementById("updateTime")
+            .innerText =
+            "API Connection Failed";
+    }
 }
 
-connectTrades();
+let btcChartObj, ethChartObj;
+let btcSeries, ethSeries;
 
-setInterval(() => {
-    cvdChart.push(cvd);
-    if (currentOI > 0) oiChart.push(currentOI);
-    if (currentPrice > 0) priceChart.push(currentPrice);
-}, 60000);
-
-setTimeout(() => {
-    cvdChart.push(cvd);
-    if (currentOI > 0) oiChart.push(currentOI);
-    if (currentPrice > 0) priceChart.push(currentPrice);
-}, 2000);
-
-setInterval(() => {
-    if (bookDeltaCount > 0) {
-        const avgDiff = bookDeltaSum / bookDeltaCount;
-        const diffEl = document.getElementById("bookDelta");
-        if (diffEl) {
-            diffEl.innerText = avgDiff > 0 ? "+" + avgDiff.toFixed(2) : avgDiff.toFixed(2);
-            diffEl.className = "value " + (avgDiff > 0 ? "green" : (avgDiff < 0 ? "red" : ""));
+function initCharts() {
+    const chartOptions = {
+        layout: {
+            background: { type: 'solid', color: 'transparent' },
+            textColor: '#d1d4dc',
+        },
+        grid: {
+            vertLines: { color: '#2a2e39' },
+            horzLines: { color: '#2a2e39' },
+        },
+        timeScale: {
+            timeVisible: true,
+            secondsVisible: false,
+        },
+        rightPriceScale: {
+            borderVisible: false,
         }
-        bookDeltaSum = 0;
-        bookDeltaCount = 0;
+    };
+
+    btcChartObj = LightweightCharts.createChart(document.getElementById('btcChart'), chartOptions);
+    btcSeries = btcChartObj.addAreaSeries({
+        lineColor: '#f0b90b',
+        topColor: 'rgba(240, 185, 11, 0.4)',
+        bottomColor: 'rgba(240, 185, 11, 0.0)',
+        lineWidth: 2,
+    });
+
+    ethChartObj = LightweightCharts.createChart(document.getElementById('ethChart'), chartOptions);
+    ethSeries = ethChartObj.addAreaSeries({
+        lineColor: '#627eea',
+        topColor: 'rgba(98, 126, 234, 0.4)',
+        bottomColor: 'rgba(98, 126, 234, 0.0)',
+        lineWidth: 2,
+    });
+    
+    window.addEventListener('resize', () => {
+        if(btcChartObj) btcChartObj.resize(document.getElementById('btcChart').clientWidth, 300);
+        if(ethChartObj) ethChartObj.resize(document.getElementById('ethChart').clientWidth, 300);
+    });
+}
+
+async function loadChartData() {
+    try {
+        const [btcRes, ethRes] = await Promise.all([
+            fetch("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1"),
+            fetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=usd&days=1")
+        ]);
+        
+        const btcData = await btcRes.json();
+        const ethData = await ethRes.json();
+
+        const formatData = (data) => {
+            let lastTime = 0;
+            return data.prices.map(item => {
+                let t = Math.floor(item[0] / 1000);
+                if (t <= lastTime) t = lastTime + 1; // force ascending for lightweight-charts
+                lastTime = t;
+                return { time: t, value: item[1] };
+            });
+        };
+
+        if (btcSeries && ethSeries) {
+            btcSeries.setData(formatData(btcData));
+            ethSeries.setData(formatData(ethData));
+            btcChartObj.timeScale().fitContent();
+            ethChartObj.timeScale().fitContent();
+        }
+    } catch(e) {
+        console.error("Failed to load chart data:", e);
     }
-}, 60000);
+}
+
+initCharts();
+updateClock();
+refresh();
+
+setInterval(updateClock,1000);
+setInterval(refresh,30000);
 
 </script>
 
