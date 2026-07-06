@@ -4,3 +4,14 @@
 
 
 /go/btc-tracker
+
+# Python bytecode
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS files
+.DS_Store
+HTML/.DS_Store
+HTML/strategy.html
