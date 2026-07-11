@@ -309,9 +309,20 @@ def run_alert_check(alerted_timestamps):
 def main_loop():
     logger.info('带状态存储的卡尔曼自适应策略监听服务已启动！')
     init_db()
+    
+    logger.info("=== 当前加载的交易对策略状态 ===")
+    for symbol in MONITORED_SYMBOLS:
+        state = get_symbol_state(symbol)
+        if state['trend'] != 'none' or state['position'] != 'flat':
+            logger.info(f"【{symbol}】 趋势: {state['trend']}, 持仓状态: {state['position']}, 止损: {state['sl_price']}, TP1击中?: {state['tp1_hit']}")
+        else:
+            logger.info(f"【{symbol}】 目前无趋势及持仓。")
+    logger.info("=================================")
+    
     alerted_timestamps = set()
     
     run_alert_check(alerted_timestamps)
+    sendMsg('kalman_trend 策略启动 \n @jp.ora')
     
     while True:
         try:
