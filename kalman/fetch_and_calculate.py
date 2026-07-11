@@ -93,6 +93,17 @@ def save_symbol_state(state: dict):
     conn.commit()
     conn.close()
 
+def sendTelMsg(msg):
+    logger.info(f"Sending Telegram: {msg[:30]}...")
+    dd = {"chat_id": -1001693639294, "text": msg}
+    pp = 'https://api.telegram.org/bot5537601331:AAEGeHCzX6f735vh2nZvictqixlBq7_MPsQ/sendMessage'
+    try:
+        response = requests.post(pp, data=dd, timeout=10)
+        if response.status_code != 200:
+            logger.error(f"Telegram error: {response.text}")
+    except Exception as e:
+        logger.error(f"Telegram connection error: {e}")
+
 def sendMsg(msg):
     import json
     import re
@@ -127,6 +138,8 @@ def sendMsg(msg):
             logger.error(f"Push service error: {response.text}")
     except Exception as e:
         logger.error(f"Push service connection error: {e}")
+
+    sendTelMsg(msg)
 
 def fetch_symbol_1h_data(symbol: str) -> pd.DataFrame:
     ohlcv = exchange.fetch_ohlcv(symbol, '1h', limit=500)
