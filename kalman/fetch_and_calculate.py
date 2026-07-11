@@ -94,15 +94,39 @@ def save_symbol_state(state: dict):
     conn.close()
 
 def sendMsg(msg):
+    import json
+    import re
     logger.info(msg)
-    dd = {"chat_id": -1001693639294, "text": msg}
-    pp = 'https://api.telegram.org/bot5537601331:AAEGeHCzX6f735vh2nZvictqixlBq7_MPsQ/sendMessage'
+    
+    parts = msg.split('\n', 1)
+    if len(parts) == 2:
+        raw_title = parts[0].strip()
+        body = parts[1].strip()
+        match = re.search(r'【(.*?)】', raw_title)
+        if match:
+            title = match.group(1)
+        else:
+            title = raw_title
+    else:
+        title = "系统提示"
+        body = msg.strip()
+
+    payload = {
+        "title": title,
+        "body": body
+    }
+    url = "http://127.0.0.1:8080/gaVimNrvTu6f6NDgsLvDcH"
+    headers = {
+        'Content-Type': 'application/json; charset=utf-8'
+    }
+    
     try:
-        response = requests.post(pp, data=dd, timeout=10)
+        data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        response = requests.post(url, headers=headers, data=data, timeout=10)
         if response.status_code != 200:
-            logger.error(f"Telegram error: {response.text}")
+            logger.error(f"Push service error: {response.text}")
     except Exception as e:
-        logger.error(f"Telegram connection error: {e}")
+        logger.error(f"Push service connection error: {e}")
 
 def fetch_symbol_1h_data(symbol: str) -> pd.DataFrame:
     ohlcv = exchange.fetch_ohlcv(symbol, '1h', limit=500)
