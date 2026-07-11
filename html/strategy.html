@@ -306,11 +306,11 @@
 
     <div class="glass-card">
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('tab-triple', this)">三重滤网判断</button>
-            <button class="tab-btn" onclick="switchTab('tab-market', this)">盘面特征解析</button>
+            <button class="tab-btn active" onclick="switchTab('tab-triple', this)" style="display: none;">三重滤网判断</button>
+            <button class="tab-btn active" onclick="switchTab('tab-market', this)">盘面特征解析</button>
         </div>
 
-        <div id="tab-triple" class="tab-content active">
+        <div id="tab-triple" class="tab-content">
             <table class="form-table">
                 <tbody>
                     <!-- 基础信息 -->
@@ -466,7 +466,7 @@
         </div> <!-- End of tab-triple -->
 
         <!-- Tab 2: 盘面特征解析 -->
-        <div id="tab-market" class="tab-content">
+        <div id="tab-market" class="tab-content active">
             <table class="form-table">
                 <tbody>
                     <tr>
@@ -479,8 +479,6 @@
                                 <option value="none">无明显特征</option>
                                 <option value="up">上升 (↑)</option>
                                 <option value="down">下降 (↓)</option>
-                                <option value="newHigh">创新高</option>
-                                <option value="newLow">创新低</option>
                                 <option value="range">横盘</option>
                             </select>
                         </td>
@@ -489,9 +487,9 @@
                         <th>OI 特征</th>
                         <td>
                             <select id="featOI" onchange="calculate()">
-                                <option value="none">无明显特征</option>
-                                <option value="up">上升 / 新高 (↑)</option>
-                                <option value="down">下降 / 下跌 (↓)</option>
+                                <option value="none">横盘 / 无明显特征</option>
+                                <option value="up">上升 (↑)</option>
+                                <option value="down">下降 (↓)</option>
                             </select>
                         </td>
                     </tr>
@@ -499,9 +497,9 @@
                         <th>合约 CVD 特征</th>
                         <td>
                             <select id="featFutCvd" onchange="calculate()">
-                                <option value="none">横盘 / 未创新高低</option>
-                                <option value="up">上升 / 新高 (↑)</option>
-                                <option value="down">下降 / 新低 (↓)</option>
+                                <option value="none">横盘 / 无明显特征</option>
+                                <option value="up">上升 (↑)</option>
+                                <option value="down">下降 (↓)</option>
                             </select>
                         </td>
                     </tr>
@@ -509,7 +507,7 @@
                         <th>现货 CVD 特征</th>
                         <td>
                             <select id="featSpotCvd" onchange="calculate()">
-                                <option value="none">横盘 / 未创新高低</option>
+                                <option value="none">横盘 / 无明显特征</option>
                                 <option value="up">上升 (↑)</option>
                                 <option value="down">下降 (↓)</option>
                             </select>
@@ -566,38 +564,46 @@
         const fFut = document.getElementById('featFutCvd').value;
 
         function evaluateMarketState(price, oi, spot, fut) {
-            // 第一层：趋势判断 (更新后12规则)
-            if (price === 'up' && oi === 'up' && fut === 'up' && spot === 'up') return { title: "健康上涨", stars: "★★★★★", desc: "增量资金+主动买盘推动，健康上涨", trade: "✅ 顺势做多" };
-            if (price === 'up' && oi === 'down' && fut === 'up' && spot === 'up') return { title: "空头回补上涨", stars: "★★★☆☆", desc: "空头回补或部分平仓推动上涨，仍偏强但持续性需观察", trade: "⚠️ 持多，不宜盲目追高" };
-            if (price === 'up' && oi === 'up' && fut === 'down' && spot === 'down') return { title: "疑似诱多", stars: "★★☆☆☆", desc: "新增持仓但买盘不支持，疑似诱多或空头建仓", trade: "⭐⭐⭐⭐ 做空关注" };
-            if (price === 'up' && oi === 'down' && fut === 'down' && spot === 'down') return { title: "买盘衰竭", stars: "★☆☆☆☆", desc: "买盘衰竭且持仓减少，上涨末期特征", trade: "⭐⭐⭐⭐ 做空关注" };
-            if (price === 'up' && oi === 'up' && fut === 'up' && spot === 'down') return { title: "杠杆推动上涨", stars: "★★★☆☆", desc: "杠杆资金推动上涨，但现货跟随不足", trade: "⚠️ 谨慎偏多，注意顶部风险" };
-            if (price === 'up' && oi === 'up' && fut === 'down' && spot === 'up') return { title: "现货主导上涨", stars: "★★★☆☆", desc: "现货强于合约，可能是健康吸筹，也可能短线震荡", trade: "🔍 等待确认" };
+            let p = price;
 
-            if (price === 'down' && oi === 'up' && fut === 'down' && spot === 'down') return { title: "健康下跌", stars: "★★★★★", desc: "增量资金+主动卖盘推动，健康下跌", trade: "✅ 顺势做空" };
-            if (price === 'down' && oi === 'down' && fut === 'down' && spot === 'down') return { title: "多头止损/释放", stars: "★★☆☆☆", desc: "多头止损/爆仓释放，下跌接近尾声概率增加", trade: "⚠️ 不宜追空" };
-            if (price === 'down' && oi === 'up' && fut === 'up' && spot === 'up') return { title: "逆势吸筹", stars: "★★★☆☆", desc: "下跌但主动买盘增强，可能吸筹", trade: "⭐⭐⭐⭐ 做多关注" };
-            if (price === 'down' && oi === 'down' && fut === 'up' && spot === 'up') return { title: "卖压衰竭", stars: "★★☆☆☆", desc: "清算导致下跌，卖压衰竭，容易反弹", trade: "⭐⭐⭐⭐ 做多关注" };
-            if (price === 'down' && oi === 'up' && fut === 'down' && spot === 'up') return { title: "疑似洗盘", stars: "★★★☆☆", desc: "合约偏空、现货承接，可能是洗盘", trade: "🔍 等待进一步确认" };
-            if (price === 'down' && oi === 'up' && fut === 'up' && spot === 'down') return { title: "方向不明", stars: "★★☆☆☆", desc: "多空分歧较大，方向不明", trade: "⏸️ 观望" };
+            // 1️⃣ 强趋势上涨（最健康）
+            // 价格 ↑ OI ↑ CVD合约 ↑ CVD现货 ↑
+            if (p === 'up' && oi === 'up' && fut === 'up' && spot === 'up') return { title: "🟢 1️⃣ 强趋势上涨（最健康）", stars: "★★★★★", desc: "多头资金 + 现货 + 杠杆同步进场", trade: "✔️ 可做趋势多<br>✔️ 最稳定结构" };
 
-            // 第二层：背离判断 (顶部)
-            if (price === 'newHigh' && oi === 'up' && fut === 'up' && spot === 'none') return { title: "经典派发", stars: "★★★★☆", desc: "合约CVD新高，现货CVD未创新高<br>现货开始卖给追涨资金。", trade: "看空 / 警惕" };
-            if (price === 'newHigh' && oi === 'up' && fut === 'none' && spot === 'down') return { title: "最危险顶部", stars: "★★★★★", desc: "合约CVD未创新高，现货CVD下降<br>价格被硬拉，跟风资金越来越少。<br>常见于BTC/ETH/山寨冲顶", trade: "做空候选" };
-            if (price === 'newHigh' && oi === 'up' && fut === 'down' && spot === 'down') return { title: "强空信号", stars: "★★★★★", desc: "两个CVD都下降<br>上涨完全依赖空头回补或被动成交。<br>通常快见顶。", trade: "强力做空候选" };
+            // 2️⃣ 强趋势下跌
+            // 价格 ↓ OI ↑ CVD合约 ↓ CVD现货 ↓
+            if (p === 'down' && oi === 'up' && fut === 'down' && spot === 'down') return { title: "🔴 2️⃣ 强趋势下跌", stars: "★★★★★", desc: "空头趋势资金主导", trade: "✅ 顺势做空" };
 
-            // 第二层：背离判断 (底部)
-            if (price === 'newLow' && oi === 'up' && fut === 'down' && spot === 'none') return { title: "经典底部", stars: "★★★★☆", desc: "合约CVD新低，现货CVD未创新低<br>空头猛烈追空，现货开始接货。", trade: "看多 / 警惕" };
-            if (price === 'newLow' && oi === 'up' && fut === 'down' && spot === 'up') return { title: "黄金底", stars: "★★★★★", desc: "空头疯狂开仓<br>现货大资金吸筹", trade: "强力抄底候选" };
-            if (price === 'newLow' && oi === 'down' && (spot === 'down' || fut === 'down')) return { title: "衰竭底", stars: "★★★☆☆", desc: "没人玩了。<br>卖盘耗尽。<br>容易反弹。", trade: "轻仓抄底候选" };
+            // 3️⃣ 空头挤压上涨（short squeeze）
+            // 价格 ↑ OI ↓ CVD合约 ↑ or → CVD现货 ↑
+            if (p === 'up' && oi === 'down' && (fut === 'up' || fut === 'none') && spot === 'up') return { title: "🟡 3️⃣ 空头挤压上涨", stars: "★★★☆☆", desc: "空头被迫平仓<br>不是新多推动", trade: "⚠️ 短线行情" };
 
-            // 第三层：横盘阶段
-            if (price === 'range' && oi === 'up' && fut === 'up' && spot === 'up') return { title: "横盘吸筹", stars: "★★★☆☆", desc: "有资金在建仓，未来会有大波动。", trade: "偏多" };
-            if (price === 'range' && oi === 'up' && fut === 'down' && spot === 'down') return { title: "横盘派发", stars: "★★★☆☆", desc: "有资金在出货，未来会有大波动。", trade: "偏空" };
-            if (price === 'range' && oi === 'up' && fut === 'down' && spot === 'up') return { title: "多空博弈", stars: "★★★☆☆", desc: "合约卖，现货买<br>主力吸筹概率较大", trade: "偏多观察" };
-            if (price === 'range' && oi === 'up' && fut === 'up' && spot === 'down') return { title: "拉高出货", stars: "★★★☆☆", desc: "合约买，现货卖<br>主力拉高出货概率较大", trade: "偏空观察" };
+            // 4️⃣ 多头派发（distribution）
+            // 价格 ↑ OI ↓ CVD合约 ↓ CVD现货 ↓
+            if (p === 'up' && oi === 'down' && fut === 'down' && spot === 'down') return { title: "🟠 4️⃣ 多头派发", stars: "★★☆☆☆", desc: "拉升中出货", trade: "⚠️ 高位风险结构" };
 
-            return null;
+            // 5️⃣ 现货主导上涨（现货推动）
+            // 价格 ↑ OI →(none) CVD合约 ↓ or → CVD现货 ↑
+            if (p === 'up' && oi === 'none' && (fut === 'down' || fut === 'none') && spot === 'up') return { title: "🔵 5️⃣ 现货主导上涨", stars: "★★★☆☆", desc: "现货在买，但衍生品不跟", trade: "✔️ 稳但慢<br>⚠️ 不容易走趋势加速" };
+
+            // 6️⃣ 合约投机拉盘（虚涨）
+            // 价格 ↑ OI ↑ CVD合约 ↑ CVD现货 ↓
+            if (p === 'up' && oi === 'up' && fut === 'up' && spot === 'down') return { title: "⚫ 6️⃣ 合约投机拉盘（虚涨）", stars: "★★☆☆☆", desc: "合约拉盘，现货在卖", trade: "⚠️ 假突破高概率" };
+
+            // 7️⃣ 震荡吸筹（chop accumulation）
+            // 价格 →(range或none) OI ↑ CVD合约 ↕(任何) CVD现货 ↕(任何)
+            // 修改为只要价格是横盘，OI是上升就可以
+            if ((p === 'range' || p === 'none') && oi === 'up' && (fut === 'up' || fut === 'down' || fut === 'none') && (spot === 'up' || spot === 'down' || spot === 'none')) return { title: "🟣 7️⃣ 震荡吸筹", stars: "★★★☆☆", desc: "双方博弈<br>做市区间", trade: "❌ 不适合交易" };
+
+            // 8️⃣ 震荡出货（distribution chop）
+            // 价格 →(range或none) OI ↓ CVD合约 ↓ CVD现货 ↓
+            if ((p === 'range' || p === 'none') && oi === 'down' && fut === 'down' && spot === 'down') return { title: "⚪ 8️⃣ 震荡出货", stars: "★☆☆☆☆", desc: "双方撤退<br>流动性收缩", trade: "观望" };
+
+            // 9️⃣ 流动性失真 / 假信号区
+            // 如果什么都没触发（无明显特征），不显示
+            if (p === 'none' && oi === 'none' && fut === 'none' && spot === 'none') return null;
+            
+            return { title: "🟤 9️⃣ 流动性失真 / 假信号区", stars: "★☆☆☆☆", desc: "CVD冲突或流动性差<br>做市商主导 / 套利主导", trade: "观望" };
         }
 
         const featResult = evaluateMarketState(fPrice, fOI, fSpot, fFut);
