@@ -12,6 +12,47 @@ import pandas as pd
 import numpy as np
 from kalman_trend import apply_kalman_trend_indicator
 
+def fmt_p(val):
+    if val is None:
+        return "0.00"
+    try:
+        fval = float(val)
+        if fval < 10.0:
+            return f"{fval:.4f}"
+        else:
+            return f"{fval:.2f}"
+    except ValueError:
+        return str(val)
+
+def calc_exit_details(state, exit_price, current_time_str):
+    entry_p = state.get('entry_price', 0.0)
+    entry_t_str = state.get('entry_time', '')
+    position = state.get('position', 'flat')
+    
+    pct_change = 0.0
+    if entry_p > 0.0:
+        if position == 'long':
+            pct_change = ((exit_price - entry_p) / entry_p) * 100
+        elif position == 'short':
+            pct_change = ((entry_p - exit_price) / entry_p) * 100
+            
+    hold_hours = 0
+    if entry_t_str:
+        try:
+            entry_dt = pd.to_datetime(entry_t_str)
+            curr_dt = pd.to_datetime(current_time_str)
+            diff = curr_dt - entry_dt
+            hold_hours = int(diff.total_seconds() / 3600)
+        except Exception:
+            pass
+            
+    return (
+        f"\n开仓价格: {fmt_p(entry_p)}"
+        f"\n开仓时间: {entry_t_str if entry_t_str else '未知'}"
+        f"\n收益变动: {pct_change:+.2f}%"
+        f"\n持仓时间: {hold_hours} 小时"
+    )
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('KalmanPersistentAlerts')
 
@@ -39,9 +80,14 @@ def init_db():
             sl_price REAL,
             tp1_price REAL,
             tp2_price REAL,
-            tp1_hit INTEGER
+            tp1_hit INTEGER,
+            entry_time TEXT
         )
     ''')
+    try:
+        cursor.execute("ALTER TABLE position_states ADD COLUMN entry_time TEXT")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -56,11 +102,12 @@ def get_symbol_state(symbol: str) -> dict:
         'sl_price': 0.0,
         'tp1_price': 0.0,
         'tp2_price': 0.0,
-        'tp1_hit': 0
+        'tp1_hit': 0,
+        'entry_time': ''
     }
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM position_states WHERE symbol = ?", (symbol,))
+    cursor.execute("SELECT symbol, trend, last_cross_time, has_entered_this_phase, position, entry_price, sl_price, tp1_price, tp2_price, tp1_hit, entry_time FROM position_states WHERE symbol = ?", (symbol,))
     row = cursor.fetchone()
     conn.close()
     if row:
@@ -74,7 +121,8 @@ def get_symbol_state(symbol: str) -> dict:
             'sl_price': row[6],
             'tp1_price': row[7],
             'tp2_price': row[8],
-            'tp1_hit': row[9]
+            'tp1_hit': row[9],
+            'entry_time': row[10] if len(row) > 10 and row[10] is not None else ''
         }
     return default_state
 
@@ -84,11 +132,11 @@ def save_symbol_state(state: dict):
     cursor.execute('''
         INSERT OR REPLACE INTO position_states (
             symbol, trend, last_cross_time, has_entered_this_phase,
-            position, entry_price, sl_price, tp1_price, tp2_price, tp1_hit
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            position, entry_price, sl_price, tp1_price, tp2_price, tp1_hit, entry_time
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         state['symbol'], state['trend'], state['last_cross_time'], state['has_entered_this_phase'],
-        state['position'], state['entry_price'], state['sl_price'], state['tp1_price'], state['tp2_price'], state['tp1_hit']
+        state['position'], state['entry_price'], state['sl_price'], state['tp1_price'], state['tp2_price'], state['tp1_hit'], state.get('entry_time', '')
     ))
     conn.commit()
     conn.close()
@@ -185,76 +233,75 @@ def run_alert_check(alerted_timestamps):
             if bullish_trans:
                 alert_id = f"{symbol}_bullish_{time_c_str}"
                 if alert_id not in alerted_timestamps:
-                    sendMsg(f"🟢 【{symbol} 1H 多头趋势】\n时间: {time_c_str}\n收盘价: {close_val:.2f}\n系统已产生金叉🡹转向信号。")
+                    sendMsg(f"🟢 【{symbol} 1H 多头趋势】\n时间: {time_c_str}\n收盘价: {fmt_p(close_val)}\n系统已产生金叉🡹转向信号。")
                     alerted_timestamps.add(alert_id)
                 state['trend'] = 'bullish'
                 state['last_cross_time'] = time_c_str
                 state['has_entered_this_phase'] = 0
                 if state['position'] == 'short':
-                    sendMsg(f"🚪 【{symbol} 1H 跨周期平仓】\n时间: {time_c_str}\n价格: {close_val:.2f}\n原因: 趋势改变 (空单被动防守平仓)。")
+                    details = calc_exit_details(state, close_val, time_c_str)
+                    sendMsg(f"🚪 【{symbol} 1H 跨周期平仓】\n时间: {time_c_str}\n价格: {fmt_p(close_val)}\n原因: 趋势改变 (空单被动防守平仓)。{details}")
                     state['position'] = 'flat'
 
             elif bearish_trans:
                 alert_id = f"{symbol}_bearish_{time_c_str}"
                 if alert_id not in alerted_timestamps:
-                    sendMsg(f"🔴 【{symbol} 1H 空头趋势】\n时间: {time_c_str}\n收盘价: {close_val:.2f}\n系统已产生死叉🢃转向信号。")
+                    sendMsg(f"🔴 【{symbol} 1H 空头趋势】\n时间: {time_c_str}\n收盘价: {fmt_p(close_val)}\n系统已产生死叉🢃转向信号。")
                     alerted_timestamps.add(alert_id)
                 state['trend'] = 'bearish'
                 state['last_cross_time'] = time_c_str
                 state['has_entered_this_phase'] = 0
                 if state['position'] == 'long':
-                    sendMsg(f"🚪 【{symbol} 1H 跨周期平仓】\n时间: {time_c_str}\n价格: {close_val:.2f}\n原因: 趋势改变 (多单被动防守平仓)。")
+                    details = calc_exit_details(state, close_val, time_c_str)
+                    sendMsg(f"🚪 【{symbol} 1H 跨周期平仓】\n时间: {time_c_str}\n价格: {fmt_p(close_val)}\n原因: 趋势改变 (多单被动防守平仓)。{details}")
                     state['position'] = 'flat'
-
-            idx_retest = -3
-            time_retest_str = df.index[idx_retest].strftime('%Y-%m-%d %H:%M:%S')
-            if df['retest_x_signal'].iloc[idx_retest]:
-                alert_id = f"{symbol}_retest_x_{time_retest_str}"
-                if alert_id not in alerted_timestamps:
-                    sendMsg(f"⚠️ 【{symbol} 1H 阻力测试受阻】\n时间: {time_retest_str}\n价格在压力带之下受阻回落 (标记为 x 信号，表示至少持续24周期)。")
-                    alerted_timestamps.add(alert_id)
-            if df['retest_plus_signal'].iloc[idx_retest]:
-                alert_id = f"{symbol}_retest_plus_{time_retest_str}"
-                if alert_id not in alerted_timestamps:
-                    sendMsg(f"✅ 【{symbol} 1H 支撑回踩成功】\n时间: {time_retest_str}\n价格在支撑带获得支撑反弹 (标记为 + 信号，表示至少持续24周期)。")
-                    alerted_timestamps.add(alert_id)
 
             if state['position'] == 'long':
                 if low_val <= state['sl_price']:
-                    sendMsg(f"🚪 【{symbol} 1H 策略多单出场修正】\n时间: {time_c_str}\n价格: {close_val:.2f}\n离场原因: 触及原始设定的硬止损点 ({state['sl_price']:.2f})。")
+                    details = calc_exit_details(state, state['sl_price'], time_c_str)
+                    sendMsg(f"🚪 【{symbol} 1H 策略多单出场修正】\n时间: {time_c_str}\n价格: {fmt_p(state['sl_price'])}\n离场原因: 触及原始设定的硬止损点 ({fmt_p(state['sl_price'])})。{details}")
                     state['position'] = 'flat'
                 elif high_val >= state['tp2_price']:
-                    sendMsg(f"🏁 【{symbol} 1H 策略多单终极目标达成 (TP2)】\n时间: {time_c_str}\n价格: {state['tp2_price']:.2f}\n进度说明: 盈亏比 1:2 完美达到，本交易单结清出局！")
+                    details = calc_exit_details(state, state['tp2_price'], time_c_str)
+                    sendMsg(f"🏁 【{symbol} 1H 策略多单终极目标达成 (TP2)】\n时间: {time_c_str}\n价格: {fmt_p(state['tp2_price'])}\n进度说明: 盈亏比 1:2 完美达到，本交易单结清出局！{details}")
                     state['position'] = 'flat'
                 elif high_val >= state['tp1_price']:
                     if state['tp1_hit'] == 0:
-                        sendMsg(f"🎯 【{symbol} 1H 策略多目标TP1抵达】\n时间: {time_c_str}\n目标价格: {state['tp1_price']:.2f}\n进度说明: 1:1 盈亏已达成。建议减半仓并设置盈亏平衡点止损。")
+                        details = calc_exit_details(state, state['tp1_price'], time_c_str)
+                        sendMsg(f"🎯 【{symbol} 1H 策略多目标TP1抵达】\n时间: {time_c_str}\n目标价格: {fmt_p(state['tp1_price'])}\n进度说明: 1:1 盈亏已达成。建议减半仓并设置盈亏平衡点止损。{details}")
                         state['tp1_hit'] = 1
                     if open_val < short_k and close_val < short_k:
-                        sendMsg(f"🚪 【{symbol} 1H 策略多单主动离场】\n时间: {time_c_str}\n价格: {close_val:.2f}\n离场原因: 开收盘全面跌穿卡尔曼快线 (自适应止损)。")
+                        details = calc_exit_details(state, close_val, time_c_str)
+                        sendMsg(f"🚪 【{symbol} 1H 策略多单主动离场】\n时间: {time_c_str}\n价格: {fmt_p(close_val)}\n离场原因: 开收盘全面跌穿卡尔曼快线 (自适应止损)。{details}")
                         state['position'] = 'flat'
                 else:
                     if open_val < short_k and close_val < short_k:
-                        sendMsg(f"🚪 【{symbol} 1H 策略多单主动离场】\n时间: {time_c_str}\n价格: {close_val:.2f}\n离场原因: 开收盘全面跌穿卡尔曼快线 (自适应止损)。")
+                        details = calc_exit_details(state, close_val, time_c_str)
+                        sendMsg(f"🚪 【{symbol} 1H 策略多单主动离场】\n时间: {time_c_str}\n价格: {fmt_p(close_val)}\n离场原因: 开收盘全面跌穿卡尔曼快线 (自适应止损)。{details}")
                         state['position'] = 'flat'
 
             elif state['position'] == 'short':
                 if high_val >= state['sl_price']:
-                    sendMsg(f"🚪 【{symbol} 1H 策略空单出场修正】\n时间: {time_c_str}\n价格: {close_val:.2f}\n离场原因: 触及原始设定的硬止损点 ({state['sl_price']:.2f})。")
+                    details = calc_exit_details(state, state['sl_price'], time_c_str)
+                    sendMsg(f"🚪 【{symbol} 1H 策略空单出场修正】\n时间: {time_c_str}\n价格: {fmt_p(state['sl_price'])}\n离场原因: 触及原始设定的硬止损点 ({fmt_p(state['sl_price'])})。{details}")
                     state['position'] = 'flat'
                 elif low_val <= state['tp2_price']:
-                    sendMsg(f"🏁 【{symbol} 1H 策略空单终极目标达成 (TP2)】\n时间: {time_c_str}\n价格: {state['tp2_price']:.2f}\n进度说明: 盈亏比 1:2 完美达到，本交易单结清出局！")
+                    details = calc_exit_details(state, state['tp2_price'], time_c_str)
+                    sendMsg(f"🏁 【{symbol} 1H 策略空单终极目标达成 (TP2)】\n时间: {time_c_str}\n价格: {fmt_p(state['tp2_price'])}\n进度说明: 盈亏比 1:2 完美达到，本交易单结清出局！{details}")
                     state['position'] = 'flat'
                 elif low_val <= state['tp1_price']:
                     if state['tp1_hit'] == 0:
-                        sendMsg(f"🎯 【{symbol} 1H 策略空目标TP1抵达】\n时间: {time_c_str}\n目标价格: {state['tp1_price']:.2f}\n进度说明: 1:1 盈亏已达成。建议减半仓并设置盈亏平衡点止损。")
+                        details = calc_exit_details(state, state['tp1_price'], time_c_str)
+                        sendMsg(f"🎯 【{symbol} 1H 策略空目标TP1抵达】\n时间: {time_c_str}\n目标价格: {fmt_p(state['tp1_price'])}\n进度说明: 1:1 盈亏已达成。建议减半仓并设置盈亏平衡点止损。{details}")
                         state['tp1_hit'] = 1
                     if open_val > short_k and close_val > short_k:
-                        sendMsg(f"🚪 【{symbol} 1H 策略空单主动离场】\n时间: {time_c_str}\n价格: {close_val:.2f}\n离场原因: 开收盘全面上升穿越卡尔曼快线 (自适应止损)。")
+                        details = calc_exit_details(state, close_val, time_c_str)
+                        sendMsg(f"🚪 【{symbol} 1H 策略空单主动离场】\n时间: {time_c_str}\n价格: {fmt_p(close_val)}\n离场原因: 开收盘全面上升穿越卡尔曼快线 (自适应止损)。{details}")
                         state['position'] = 'flat'
                 else:
                     if open_val > short_k and close_val > short_k:
-                        sendMsg(f"🚪 【{symbol} 1H 策略空单主动离场】\n时间: {time_c_str}\n价格: {close_val:.2f}\n离场原因: 开收盘全面上升穿越卡尔曼快线 (自适应止损)。")
+                        details = calc_exit_details(state, close_val, time_c_str)
+                        sendMsg(f"🚪 【{symbol} 1H 策略空单主动离场】\n时间: {time_c_str}\n价格: {fmt_p(close_val)}\n离场原因: 开收盘全面上升穿越卡尔曼快线 (自适应止损)。{details}")
                         state['position'] = 'flat'
 
             if state['position'] == 'flat' and state['last_cross_time'] != '':
@@ -269,6 +316,7 @@ def run_alert_check(alerted_timestamps):
                             state['entry_price'] = short_k
                             state['has_entered_this_phase'] = 1
                             state['tp1_hit'] = 0
+                            state['entry_time'] = time_c_str
                             
                             sl = max(long_k * 0.98, short_k * 0.96)
                             if sl >= short_k * 0.995:
@@ -279,7 +327,7 @@ def run_alert_check(alerted_timestamps):
                             state['tp1_price'] = short_k + risk
                             state['tp2_price'] = short_k + 2 * risk
                             
-                            msg = f"🟢 【{symbol} 1H 策略多单进场提醒】\n时间: {time_c_str}\n入场基准点: {state['entry_price']:.2f}\n计划止损 (SL): {state['sl_price']:.2f}\n预计TP1 (1:1): {state['tp1_price']:.2f}\n预计TP2 (1:2): {state['tp2_price']:.2f}"
+                            msg = f"🟢 【{symbol} 1H 策略多单进场提醒】\n时间: {time_c_str}\n入场基准点: {fmt_p(state['entry_price'])}\n计划止损 (SL): {fmt_p(state['sl_price'])}\n预计TP1 (1:1): {fmt_p(state['tp1_price'])}\n预计TP2 (1:2): {fmt_p(state['tp2_price'])}"
                             sendMsg(msg)
                             
                     elif state['trend'] == 'bearish':
@@ -288,6 +336,7 @@ def run_alert_check(alerted_timestamps):
                             state['entry_price'] = short_k
                             state['has_entered_this_phase'] = 1
                             state['tp1_hit'] = 0
+                            state['entry_time'] = time_c_str
                             
                             sl = min(long_k * 1.02, short_k * 1.04)
                             if sl <= short_k * 1.005:
@@ -298,7 +347,7 @@ def run_alert_check(alerted_timestamps):
                             state['tp1_price'] = short_k - risk
                             state['tp2_price'] = short_k - 2 * risk
                             
-                            msg = f"📊 🟠 【{symbol} 1H 策略空单进场提醒】\n时间: {time_c_str}\n入场基准点: {state['entry_price']:.2f}\n计划止损 (SL): {state['sl_price']:.2f}\n预计TP1 (1:1): {state['tp1_price']:.2f}\n预计TP2 (1:2): {state['tp2_price']:.2f}"
+                            msg = f"📊 🟠 【{symbol} 1H 策略空单进场提醒】\n时间: {time_c_str}\n入场基准点: {fmt_p(state['entry_price'])}\n计划止损 (SL): {fmt_p(state['sl_price'])}\n预计TP1 (1:1): {fmt_p(state['tp1_price'])}\n预计TP2 (1:2): {fmt_p(state['tp2_price'])}"
                             sendMsg(msg)
 
             save_symbol_state(state)
