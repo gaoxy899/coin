@@ -270,12 +270,12 @@ def run_alert_check(alerted_timestamps):
                         details = calc_exit_details(state, state['tp1_price'], time_c_str)
                         sendMsg(f"🎯 【{symbol} 1H 策略多目标TP1抵达】\n时间: {time_c_str}\n目标价格: {fmt_p(state['tp1_price'])}\n进度说明: 1:1 盈亏已达成。建议减半仓并设置盈亏平衡点止损。{details}")
                         state['tp1_hit'] = 1
-                    if open_val < short_k and close_val < short_k:
+                    if open_val < long_k and close_val < long_k:
                         details = calc_exit_details(state, close_val, time_c_str)
                         sendMsg(f"🚪 【{symbol} 1H 策略多单主动离场】\n时间: {time_c_str}\n价格: {fmt_p(close_val)}\n离场原因: 开收盘全面跌穿卡尔曼快线 (自适应止损)。{details}")
                         state['position'] = 'flat'
                 else:
-                    if open_val < short_k and close_val < short_k:
+                    if open_val < long_k and close_val < long_k:
                         details = calc_exit_details(state, close_val, time_c_str)
                         sendMsg(f"🚪 【{symbol} 1H 策略多单主动离场】\n时间: {time_c_str}\n价格: {fmt_p(close_val)}\n离场原因: 开收盘全面跌穿卡尔曼快线 (自适应止损)。{details}")
                         state['position'] = 'flat'
@@ -294,12 +294,12 @@ def run_alert_check(alerted_timestamps):
                         details = calc_exit_details(state, state['tp1_price'], time_c_str)
                         sendMsg(f"🎯 【{symbol} 1H 策略空目标TP1抵达】\n时间: {time_c_str}\n目标价格: {fmt_p(state['tp1_price'])}\n进度说明: 1:1 盈亏已达成。建议减半仓并设置盈亏平衡点止损。{details}")
                         state['tp1_hit'] = 1
-                    if open_val > short_k and close_val > short_k:
+                    if open_val > long_k and close_val > long_k:
                         details = calc_exit_details(state, close_val, time_c_str)
                         sendMsg(f"🚪 【{symbol} 1H 策略空单主动离场】\n时间: {time_c_str}\n价格: {fmt_p(close_val)}\n离场原因: 开收盘全面上升穿越卡尔曼快线 (自适应止损)。{details}")
                         state['position'] = 'flat'
                 else:
-                    if open_val > short_k and close_val > short_k:
+                    if open_val > long_k and close_val > long_k:
                         details = calc_exit_details(state, close_val, time_c_str)
                         sendMsg(f"🚪 【{symbol} 1H 策略空单主动离场】\n时间: {time_c_str}\n价格: {fmt_p(close_val)}\n离场原因: 开收盘全面上升穿越卡尔曼快线 (自适应止损)。{details}")
                         state['position'] = 'flat'
