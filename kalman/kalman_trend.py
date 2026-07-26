@@ -62,12 +62,69 @@ def calculate_atr(df: pd.DataFrame, length: int = 200) -> pd.Series:
             
     return pd.Series(rma, index=df.index)
 
+
+INITIAL_DYNAMIC_STOP_BARS = 36
+
+
+def should_exit_by_dynamic_stop(
+    side: str,
+    entry_idx: int,
+    current_idx: int,
+    open_vals: np.ndarray,
+    close_vals: np.ndarray,
+    short_k: np.ndarray,
+    long_k: np.ndarray,
+    high_vals: np.ndarray,
+    low_vals: np.ndarray,
+) -> bool:
+    """Evaluate the dynamic stop on a completed candle.
+
+    During the first 36 completed bars after entry, this uses the new
+    two-candle rule. From bar 37 onwards, it keeps the prior fast-line stop.
+    """
+    bars_since_entry = current_idx - entry_idx
+    if 2 <= bars_since_entry <= INITIAL_DYNAMIC_STOP_BARS:
+        previous_idx = current_idx - 1
+        previous_rises = open_vals[previous_idx] < close_vals[previous_idx]
+        current_rises = open_vals[current_idx] < close_vals[current_idx]
+        if side == 'long':
+            # Implement the numeric condition supplied for the long position.
+            stop_condition = (
+                previous_rises
+                and current_rises
+                and close_vals[previous_idx] < long_k[previous_idx]
+                and close_vals[current_idx] < long_k[current_idx]
+            )
+            if not stop_condition:
+                return False
+            body = abs(close_vals[current_idx] - open_vals[current_idx])
+            lower_shadow = min(open_vals[current_idx], close_vals[current_idx]) - low_vals[current_idx]
+            # A zero-body candle is not a valid pinbar because its body multiple
+            # is undefined. The pinbar exception applies only to the second candle.
+            return not (body > 0 and lower_shadow >= 5 * body)
+        if side == 'short':
+            # Implement the numeric condition supplied for the short position.
+            stop_condition = previous_rises and current_rises
+            if not stop_condition:
+                return False
+            body = abs(close_vals[current_idx] - open_vals[current_idx])
+            upper_shadow = high_vals[current_idx] - max(open_vals[current_idx], close_vals[current_idx])
+            return not (body > 0 and upper_shadow >= 5 * body)
+        return False
+
+    if side == 'long':
+        return open_vals[current_idx] < short_k[current_idx] and close_vals[current_idx] < short_k[current_idx]
+    if side == 'short':
+        return open_vals[current_idx] > short_k[current_idx] and close_vals[current_idx] > short_k[current_idx]
+    return False
+
 def simulate_strategy(df: pd.DataFrame) -> pd.DataFrame:
     """
     Simulates the Kalman pullback entry strategy:
     - Entry window: touch short_kalman within 30 periods after transition crossover.
     - Risk & reward (1:1, 1:2) SL/TP calculations.
-    - Double close filter: exit if both open and close cross short_kalman.
+    - First 36 bars after entry use the two-candle dynamic stop; from bar 37,
+      exit if both open and close cross short_kalman.
     """
     n = len(df)
     close_vals = df['close'].values
@@ -98,6 +155,7 @@ def simulate_strategy(df: pd.DataFrame) -> pd.DataFrame:
     tp1_price = 0.0
     tp2_price = 0.0
     tp1_hit = False
+    entry_idx = -1
     
     last_cross_idx = -1
     has_entered_this_phase = False
@@ -114,53 +172,63 @@ def simulate_strategy(df: pd.DataFrame) -> pd.DataFrame:
             if pos == -1:
                 strat_exit_signal[i] = 'Reversal'
                 pos = 0
+                entry_idx = -1
         elif bear_trans[i]:
             last_cross_idx = i
             has_entered_this_phase = False
             if pos == 1:
                 strat_exit_signal[i] = 'Reversal'
                 pos = 0
+                entry_idx = -1
                 
         # 2. Check exits
         if pos == 1:
             if low_vals[i] <= sl_price:
                 strat_exit_signal[i] = 'SL'
                 pos = 0
+                entry_idx = -1
             elif high_vals[i] >= tp2_price:
                 strat_tp2_hit[i] = True
                 strat_exit_signal[i] = 'TP2'
                 pos = 0
+                entry_idx = -1
             elif high_vals[i] >= tp1_price:
                 if not tp1_hit:
                     strat_tp1_hit[i] = True
                     tp1_hit = True
-                if open_vals[i] < short_k[i] and close_vals[i] < short_k[i]:
+                if should_exit_by_dynamic_stop('long', entry_idx, i, open_vals, close_vals, short_k, long_k, high_vals, low_vals):
                     strat_exit_signal[i] = 'SL_Line'
                     pos = 0
+                    entry_idx = -1
             else:
-                if open_vals[i] < short_k[i] and close_vals[i] < short_k[i]:
+                if should_exit_by_dynamic_stop('long', entry_idx, i, open_vals, close_vals, short_k, long_k, high_vals, low_vals):
                     strat_exit_signal[i] = 'SL_Line'
                     pos = 0
+                    entry_idx = -1
                     
         elif pos == -1:
             if high_vals[i] >= sl_price:
                 strat_exit_signal[i] = 'SL'
                 pos = 0
+                entry_idx = -1
             elif low_vals[i] <= tp2_price:
                 strat_tp2_hit[i] = True
                 strat_exit_signal[i] = 'TP2'
                 pos = 0
+                entry_idx = -1
             elif low_vals[i] <= tp1_price:
                 if not tp1_hit:
                     strat_tp1_hit[i] = True
                     tp1_hit = True
-                if open_vals[i] > short_k[i] and close_vals[i] > short_k[i]:
+                if should_exit_by_dynamic_stop('short', entry_idx, i, open_vals, close_vals, short_k, long_k, high_vals, low_vals):
                     strat_exit_signal[i] = 'SL_Line'
                     pos = 0
+                    entry_idx = -1
             else:
-                if open_vals[i] > short_k[i] and close_vals[i] > short_k[i]:
+                if should_exit_by_dynamic_stop('short', entry_idx, i, open_vals, close_vals, short_k, long_k, high_vals, low_vals):
                     strat_exit_signal[i] = 'SL_Line'
                     pos = 0
+                    entry_idx = -1
                     
         # 3. Check Entries
         if pos == 0:
@@ -169,6 +237,7 @@ def simulate_strategy(df: pd.DataFrame) -> pd.DataFrame:
                     if low_vals[i] <= short_k[i]:
                         pos = 1
                         entry_price = short_k[i]
+                        entry_idx = i
                         has_entered_this_phase = True
                         
                         # SL 2% below long, max 4% total risk
@@ -186,24 +255,20 @@ def simulate_strategy(df: pd.DataFrame) -> pd.DataFrame:
                         if low_vals[i] <= sl_price:
                             strat_exit_signal[i] = 'SL'
                             pos = 0
+                            entry_idx = -1
                         elif high_vals[i] >= tp2_price:
                             strat_tp2_hit[i] = True
                             strat_exit_signal[i] = 'TP2'
                             pos = 0
+                            entry_idx = -1
                         elif high_vals[i] >= tp1_price:
                             strat_tp1_hit[i] = True
                             tp1_hit = True
-                            if open_vals[i] < short_k[i] and close_vals[i] < short_k[i]:
-                                strat_exit_signal[i] = 'SL_Line'
-                                pos = 0
-                        else:
-                            if open_vals[i] < short_k[i] and close_vals[i] < short_k[i]:
-                                strat_exit_signal[i] = 'SL_Line'
-                                pos = 0
                 else:  # Bearish -> Short Entry
                     if high_vals[i] >= short_k[i]:
                         pos = -1
                         entry_price = short_k[i]
+                        entry_idx = i
                         has_entered_this_phase = True
                         
                         # SL 2% above long, max 4% total risk
@@ -221,20 +286,15 @@ def simulate_strategy(df: pd.DataFrame) -> pd.DataFrame:
                         if high_vals[i] >= sl_price:
                             strat_exit_signal[i] = 'SL'
                             pos = 0
+                            entry_idx = -1
                         elif low_vals[i] <= tp2_price:
                             strat_tp2_hit[i] = True
                             strat_exit_signal[i] = 'TP2'
                             pos = 0
+                            entry_idx = -1
                         elif low_vals[i] <= tp1_price:
                             strat_tp1_hit[i] = True
                             tp1_hit = True
-                            if open_vals[i] > short_k[i] and close_vals[i] > short_k[i]:
-                                strat_exit_signal[i] = 'SL_Line'
-                                pos = 0
-                        else:
-                            if open_vals[i] > short_k[i] and close_vals[i] > short_k[i]:
-                                strat_exit_signal[i] = 'SL_Line'
-                                pos = 0
                                 
         strat_pos[i] = pos
         if pos != 0:

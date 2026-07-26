@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>交易决策系统 - 三重滤网</title>
+<title>订单流决策系统</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
     :root {
@@ -301,13 +301,13 @@
 <div class="container">
     <div class="header">
         <h1>交易决策系统</h1>
-        <p>简单三步：把握方向、找点位、定时机</p>
+        <p>价格、持仓量(OI)、CVD(合约/现货)</p>
     </div>
 
     <div class="glass-card">
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('tab-triple', this)" style="display: none;">三重滤网判断</button>
-            <button class="tab-btn active" onclick="switchTab('tab-market', this)">盘面特征解析</button>
+            <button class="tab-btn active" onclick="switchTab('tab-triple', this)" style="display: none;">订单流决策判断</button>
+            <button class="tab-btn active" onclick="switchTab('tab-market', this)">盘面OI、CVD特征解析</button>
         </div>
 
         <div id="tab-triple" class="tab-content">
@@ -470,16 +470,15 @@
             <table class="form-table">
                 <tbody>
                     <tr>
-                        <th colspan="2" class="section-header" style="border-top: none;">盘面特征评分 (量价 & CVD)</th>
+                        <th colspan="2" class="section-header" style="border-top: none;">四维盘面特征解析 (价格 · OI · CVD)</th>
                     </tr>
                     <tr>
                         <th>价格特征</th>
                         <td>
                             <select id="featPrice" onchange="calculate()">
-                                <option value="none">无明显特征</option>
                                 <option value="up">上升 (↑)</option>
                                 <option value="down">下降 (↓)</option>
-                                <option value="range">横盘</option>
+                                <option value="range">横盘 (→)</option>
                             </select>
                         </td>
                     </tr>
@@ -487,9 +486,9 @@
                         <th>OI 特征</th>
                         <td>
                             <select id="featOI" onchange="calculate()">
-                                <option value="none">横盘 / 无明显特征</option>
                                 <option value="up">上升 (↑)</option>
                                 <option value="down">下降 (↓)</option>
+                                <option value="range">横盘 (→)</option>
                             </select>
                         </td>
                     </tr>
@@ -497,9 +496,9 @@
                         <th>合约 CVD 特征</th>
                         <td>
                             <select id="featFutCvd" onchange="calculate()">
-                                <option value="none">横盘 / 无明显特征</option>
                                 <option value="up">上升 (↑)</option>
                                 <option value="down">下降 (↓)</option>
+                                <option value="range">横盘 (→)</option>
                             </select>
                         </td>
                     </tr>
@@ -507,25 +506,25 @@
                         <th>现货 CVD 特征</th>
                         <td>
                             <select id="featSpotCvd" onchange="calculate()">
-                                <option value="none">横盘 / 无明显特征</option>
                                 <option value="up">上升 (↑)</option>
                                 <option value="down">下降 (↓)</option>
+                                <option value="range">横盘 (→)</option>
                             </select>
                         </td>
                     </tr>
-                    <tr id="featureResultRow" style="display: none;">
+                    <tr id="featureResultRow">
                         <td colspan="2" style="padding: 0; border-bottom: none;">
                             <div style="background: rgba(59, 130, 246, 0.05); border-left: 4px solid var(--primary); padding: 16px 24px; margin: 12px 24px; border-radius: 4px;">
                                 <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                    <div id="featTitle" style="font-weight: 700; font-size: 16px; color: var(--primary);">强多头</div>
-                                    <div id="featStars" style="color: #f59e0b; letter-spacing: 2px;">★★★★★</div>
+                                    <div id="featTitle" style="font-weight: 700; font-size: 16px; color: var(--primary);">市场含义</div>
+                                    <div id="featCombination" style="color: var(--text-muted); font-size: 14px; letter-spacing: 2px;"></div>
                                 </div>
                                 <div id="featDesc" style="font-size: 14px; color: var(--text-main); margin-bottom: 12px; line-height: 1.6;">
-                                    说明...
+                                    正在分析...
                                 </div>
                                 <div style="font-size: 14px; font-weight: 600; color: var(--success); display: flex; align-items: center; gap: 8px;">
                                     <span style="background: rgba(16, 185, 129, 0.2); padding: 4px 8px; border-radius: 4px; font-size: 12px;">交易提示</span>
-                                    <span id="featTrade">顺势做多</span>
+                                    <span id="featTrade">—</span>
                                 </div>
                             </div>
                         </td>
@@ -563,61 +562,36 @@
         const fSpot = document.getElementById('featSpotCvd').value;
         const fFut = document.getElementById('featFutCvd').value;
 
-        function evaluateMarketState(price, oi, spot, fut) {
-            let p = price;
+        const marketStates = {
+            "up-up-up-up": { desc: "增量资金+主动买盘推动，健康上涨", trade: "✅ 顺势做多" },
+            "up-down-up-up": { desc: "空头回补或部分平仓推动上涨，仍偏强但持续性需观察", trade: "⚠️ 持多，不宜盲目追高" },
+            "up-up-down-down": { desc: "新增持仓但买盘不支持，疑似诱多或空头建仓", trade: "⭐⭐⭐⭐ 做空关注" },
+            "up-down-down-up": { desc: "现货主动买入推动，合约空头退出", trade: "偏强，可能是真上涨启动" },
+            "up-down-down-down": { desc: "合约和现货都有卖压，但价格上涨", trade: "强吸收，可能是空头回补或卖方衰竭" },
+            "up-down-down-range": { desc: "买卖双方谨慎，主要靠空头平仓", trade: "反弹性质更强，持续性较弱" },
+            "up-up-up-down": { desc: "杠杆资金推动上涨，但现货跟随不足", trade: "⚠️ 谨慎偏多，注意顶部风险" },
+            "up-up-down-up": { desc: "现货强于合约，可能是健康吸筹，也可能短线震荡", trade: "🔍 等待确认" },
+            "down-up-down-down": { desc: "增量资金+主动卖盘推动，健康下跌", trade: "✅ 顺势做空" },
+            "down-down-down-down": { desc: "多头止损/爆仓释放，下跌接近尾声概率增加", trade: "⚠️ 不宜追空" },
+            "down-up-up-up": { desc: "下跌但主动买盘增强，可能吸筹", trade: "⭐⭐⭐⭐ 做多关注" },
+            "down-down-up-up": { desc: "清算导致下跌，卖压衰竭，容易反弹", trade: "⭐⭐⭐⭐ 做多关注" },
+            "down-up-down-up": { desc: "合约偏空、现货承接，可能是洗盘", trade: "🔍 等待进一步确认" },
+            "down-up-up-down": { desc: "多空分歧较大，方向不明", trade: "⏸️ 观望" }
+        };
 
-            // 1️⃣ 强趋势上涨（最健康）
-            // 价格 ↑ OI ↑ CVD合约 ↑ CVD现货 ↑
-            if (p === 'up' && oi === 'up' && fut === 'up' && spot === 'up') return { title: "🟢 1️⃣ 强趋势上涨（最健康）", stars: "★★★★★", desc: "多头资金 + 现货 + 杠杆同步进场", trade: "✔️ 可做趋势多<br>✔️ 最稳定结构" };
-
-            // 2️⃣ 强趋势下跌
-            // 价格 ↓ OI ↑ CVD合约 ↓ CVD现货 ↓
-            if (p === 'down' && oi === 'up' && fut === 'down' && spot === 'down') return { title: "🔴 2️⃣ 强趋势下跌", stars: "★★★★★", desc: "空头趋势资金主导", trade: "✅ 顺势做空" };
-
-            // 3️⃣ 空头挤压上涨（short squeeze）
-            // 价格 ↑ OI ↓ CVD合约 ↑ or → CVD现货 ↑
-            if (p === 'up' && oi === 'down' && (fut === 'up' || fut === 'none') && spot === 'up') return { title: "🟡 3️⃣ 空头挤压上涨", stars: "★★★☆☆", desc: "空头被迫平仓<br>不是新多推动", trade: "⚠️ 短线行情" };
-
-            // 4️⃣ 多头派发（distribution）
-            // 价格 ↑ OI ↓ CVD合约 ↓ CVD现货 ↓
-            if (p === 'up' && oi === 'down' && fut === 'down' && spot === 'down') return { title: "🟠 4️⃣ 多头派发", stars: "★★☆☆☆", desc: "拉升中出货", trade: "⚠️ 高位风险结构" };
-
-            // 5️⃣ 现货主导上涨（现货推动）
-            // 价格 ↑ OI →(none) CVD合约 ↓ or → CVD现货 ↑
-            if (p === 'up' && oi === 'none' && (fut === 'down' || fut === 'none') && spot === 'up') return { title: "🔵 5️⃣ 现货主导上涨", stars: "★★★☆☆", desc: "现货在买，但衍生品不跟", trade: "✔️ 稳但慢<br>⚠️ 不容易走趋势加速" };
-
-            // 6️⃣ 合约投机拉盘（虚涨）
-            // 价格 ↑ OI ↑ CVD合约 ↑ CVD现货 ↓
-            if (p === 'up' && oi === 'up' && fut === 'up' && spot === 'down') return { title: "⚫ 6️⃣ 合约投机拉盘（虚涨）", stars: "★★☆☆☆", desc: "合约拉盘，现货在卖", trade: "⚠️ 假突破高概率" };
-
-            // 7️⃣ 震荡吸筹（chop accumulation）
-            // 价格 →(range或none) OI ↑ CVD合约 ↕(任何) CVD现货 ↕(任何)
-            // 修改为只要价格是横盘，OI是上升就可以
-            if ((p === 'range' || p === 'none') && oi === 'up' && (fut === 'up' || fut === 'down' || fut === 'none') && (spot === 'up' || spot === 'down' || spot === 'none')) return { title: "🟣 7️⃣ 震荡吸筹", stars: "★★★☆☆", desc: "双方博弈<br>做市区间", trade: "❌ 不适合交易" };
-
-            // 8️⃣ 震荡出货（distribution chop）
-            // 价格 →(range或none) OI ↓ CVD合约 ↓ CVD现货 ↓
-            if ((p === 'range' || p === 'none') && oi === 'down' && fut === 'down' && spot === 'down') return { title: "⚪ 8️⃣ 震荡出货", stars: "★☆☆☆☆", desc: "双方撤退<br>流动性收缩", trade: "观望" };
-
-            // 9️⃣ 流动性失真 / 假信号区
-            // 如果什么都没触发（无明显特征），不显示
-            if (p === 'none' && oi === 'none' && fut === 'none' && spot === 'none') return null;
-            
-            return { title: "🟤 9️⃣ 流动性失真 / 假信号区", stars: "★☆☆☆☆", desc: "CVD冲突或流动性差<br>做市商主导 / 套利主导", trade: "观望" };
-        }
-
-        const featResult = evaluateMarketState(fPrice, fOI, fSpot, fFut);
+        const stateKey = `${fPrice}-${fOI}-${fFut}-${fSpot}`;
+        const featResult = marketStates[stateKey] || {
+            desc: "该组合不在当前策略表中，信号存在冲突，建议等待更明确的盘面结构。",
+            trade: "⏸️ 观望"
+        };
         const featRowEl = document.getElementById('featureResultRow');
-
-        if (featResult) {
-            featRowEl.style.display = 'table-row';
-            document.getElementById('featTitle').innerText = featResult.title;
-            document.getElementById('featStars').innerText = featResult.stars;
-            document.getElementById('featDesc').innerHTML = featResult.desc;
-            document.getElementById('featTrade').innerText = featResult.trade;
-        } else {
-            featRowEl.style.display = 'none';
-        }
+        const arrows = value => ({ up: '↑', down: '↓', range: '→' }[value] || '—');
+        featRowEl.style.display = 'table-row';
+        document.getElementById('featTitle').innerText = "市场含义";
+        document.getElementById('featCombination').innerText =
+            `${arrows(fPrice)}  ${arrows(fOI)}  ${arrows(fFut)}  ${arrows(fSpot)}`;
+        document.getElementById('featDesc').innerText = featResult.desc;
+        document.getElementById('featTrade').innerText = featResult.trade;
 
         const entryPx = parseFloat(document.getElementById('entryPx').value) || 0;
         const slPx = parseFloat(document.getElementById('slPx').value) || 0;
@@ -691,7 +665,7 @@
             `;
             reasonsList.innerHTML = "";
             if (featResult) {
-                reasonsList.innerHTML = `<li style="color: var(--success);">🎯 强特征加持：${featResult.title} (${featResult.stars})</li>`;
+                reasonsList.innerHTML = `<li style="color: var(--success);">🎯 盘面提示：${featResult.trade}</li>`;
             }
         } else {
             resultStatus.innerHTML = `
@@ -701,7 +675,7 @@
             
             reasonsList.innerHTML = reasons.map(r => `<li>${r}</li>`).join('');
             if (featResult) {
-                reasonsList.innerHTML += `<li style="color: var(--warning); margin-top: 8px; list-style-type: none;">⚠️ 提示：检测到极强盘面特征 (${featResult.title} ${featResult.stars})</li>`;
+                reasonsList.innerHTML += `<li style="color: var(--warning); margin-top: 8px; list-style-type: none;">盘面提示：${featResult.trade}</li>`;
             }
         }
     }
