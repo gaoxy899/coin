@@ -564,11 +564,14 @@
 
         const marketStates = {
             "up-up-up-up": { desc: "增量资金+主动买盘推动，健康上涨", trade: "✅ 顺势做多" },
-            "up-down-up-up": { desc: "空头回补或部分平仓推动上涨，仍偏强但持续性需观察", trade: "⚠️ 持多，不宜盲目追高" },
+            "up-down-up-up": { desc: "空头回补推动上涨，说明还有真实买盘参与，但更偏向去杠杆式上涨。如果出现在一段下跌之后，则提示较强的底部反转信号。", trade: "⚠️ 观察后续是否有新的 OI 增加来接力" },
+            "up-down-up-down": { desc: "空头回补推动上涨，OI 越来越少、合约 CVD 越来越高，但现货 CVD 完全没有配合，上涨缺乏真正资金支撑。上涨一旦失去动力，快速回落的概率会明显提高。", trade: "🔍 等待三个条件共振：① OI 停止下降甚至开始回升（空头回补结束，新仓开始进入）；② 合约 CVD 上涨乏力或转为下降（主动买盘衰竭）；③ 现货 CVD 仍持续下降（真实资金仍在卖出）" },
+            "up-down-up-range": { desc: "如果出现在一段下跌之后，疑似底部候选，卖压可能正在衰竭；如果出现在一段上涨之后，则更可能是空头回补。", trade: "🔍 下跌后等待确认；上涨后不追涨" },
             "up-up-down-down": { desc: "新增持仓但买盘不支持，疑似诱多或空头建仓", trade: "⭐⭐⭐⭐ 做空关注" },
             "up-down-down-up": { desc: "现货主动买入推动，合约空头退出", trade: "偏强，可能是真上涨启动" },
             "up-down-down-down": { desc: "合约和现货都有卖压，但价格上涨", trade: "强吸收，可能是空头回补或卖方衰竭" },
             "up-down-down-range": { desc: "买卖双方谨慎，主要靠空头平仓", trade: "反弹性质更强，持续性较弱" },
+            "up-range-up-up": { desc: "偏多，但没有杠杆资金持续流入。没有大量新增杠杆仓位堆积，后续若 OI 再温和放大，则有机会演变成更强的趋势。", trade: "综合评分：8.5～9 分（偏多）" },
             "up-up-up-down": { desc: "杠杆资金推动上涨，但现货跟随不足", trade: "⚠️ 谨慎偏多，注意顶部风险" },
             "up-up-down-up": { desc: "现货强于合约，可能是健康吸筹，也可能短线震荡", trade: "🔍 等待确认" },
             "down-up-down-down": { desc: "增量资金+主动卖盘推动，健康下跌", trade: "✅ 顺势做空" },
@@ -576,7 +579,8 @@
             "down-up-up-up": { desc: "下跌但主动买盘增强，可能吸筹", trade: "⭐⭐⭐⭐ 做多关注" },
             "down-down-up-up": { desc: "清算导致下跌，卖压衰竭，容易反弹", trade: "⭐⭐⭐⭐ 做多关注" },
             "down-up-down-up": { desc: "合约偏空、现货承接，可能是洗盘", trade: "🔍 等待进一步确认" },
-            "down-up-up-down": { desc: "多空分歧较大，方向不明", trade: "⏸️ 观望" }
+            "down-up-up-down": { desc: "多空分歧较大，方向不明", trade: "⏸️ 观望" },
+            "range-up-range-range": { desc: "值得重点关注的潜在底部吸筹区域。", trade: "🔍 观察突破时是否伴随 OI 继续增加、合约 CVD 由平转升、现货 CVD 继续走强" }
         };
 
         const stateKey = `${fPrice}-${fOI}-${fFut}-${fSpot}`;
