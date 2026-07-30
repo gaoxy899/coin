@@ -2,6 +2,7 @@ import unittest
 import os
 from unittest.mock import patch
 
+import trade_executor
 from trade_executor import AutoTrader, TradingConfig
 
 
@@ -17,6 +18,7 @@ class FakeExchange:
         self.available = available
         self.auto_add_margin = auto_add_margin
         self.order_number = 0
+        self.orders = {}
 
     def milliseconds(self):
         return 1234567890000 + self.order_number
@@ -76,10 +78,33 @@ class FakeExchange:
         is_protection = "stopLossPrice" in params or "takeProfitPrice" in params
         if is_protection and self.fail_protection_at == self.order_number:
             raise RuntimeError("protection failed")
-        return {"id": str(self.order_number), "filled": amount, "average": 10010}
+        if order_type == "market" and not is_protection and amount:
+            if params.get("reduceOnly"):
+                self.position = 0
+            else:
+                self.position += amount if side == "buy" else -amount
+        order = {"id": str(self.order_number), "status": "closed", "filled": amount, "average": 10010}
+        self.orders[order["id"]] = order
+        return order
 
-    def cancel_order(self, order_id, symbol, params):
+    def fetch_order(self, order_id, symbol):
+        self.calls.append(("fetch_order", order_id, symbol))
+        return self.orders[order_id]
+
+    def cancel_order(self, order_id, symbol, params=None):
         self.calls.append(("cancel", order_id, symbol, params))
+
+
+class UnconfirmedEntryExchange(FakeExchange):
+    """Returns a filled order while deliberately exposing no futures position."""
+
+    def create_order(self, symbol, order_type, side, amount, price, params):
+        order = super().create_order(symbol, order_type, side, amount, price, params)
+        if order_type == "market" and not params.get("reduceOnly") and not (
+            "stopLossPrice" in params or "takeProfitPrice" in params
+        ):
+            self.position = 0
+        return order
 
 
 def live_config():
@@ -189,6 +214,8 @@ class AutoTraderTest(unittest.TestCase):
         )
 
         creates = [call for call in exchange.calls if call[0] == "create"]
+        first_protection_call = next(index for index, call in enumerate(exchange.calls) if call[0] == "create" and "stopLossPrice" in call[5])
+        self.assertTrue(any(call[0] == "fetch_order" for call in exchange.calls[:first_protection_call]))
         self.assertEqual(len(creates), 4)
         self.assertEqual(creates[0][3:5], ("buy", 0.01))
         self.assertEqual(creates[1][3], "sell")
@@ -197,6 +224,17 @@ class AutoTraderTest(unittest.TestCase):
         self.assertTrue(creates[2][5]["reduceOnly"])
         self.assertTrue(creates[3][5]["closePosition"])
         self.assertEqual(result["order_ids"], ["2", "3", "4"])
+
+    def test_missing_exchange_position_prevents_protection_orders(self):
+        exchange = UnconfirmedEntryExchange()
+        with patch.object(trade_executor, "ENTRY_CONFIRM_TIMEOUT_SECONDS", 0):
+            with self.assertRaisesRegex(RuntimeError, "仓位确认超时"):
+                AutoTrader(exchange, live_config()).open_position(
+                    "BTC/USDT", "long", 10000, 9800, 10200, 10400
+                )
+
+        creates = [call for call in exchange.calls if call[0] == "create"]
+        self.assertEqual(len(creates), 1)
 
     def test_protection_failure_emergency_closes_entry(self):
         exchange = FakeExchange(fail_protection_at=2)

@@ -1,7 +1,13 @@
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+
+
+# 保护单只能在交易所已确认实际仓位后提交，避免条件单系统尚未同步仓位。
+ENTRY_CONFIRM_TIMEOUT_SECONDS = 5.0
+ENTRY_CONFIRM_POLL_SECONDS = 0.2
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -212,6 +218,82 @@ class AutoTrader:
         if bool(config.get("isAutoAddMargin")):
             raise RuntimeError(f"{symbol} 已开启逐仓自动追加保证金，拒绝开仓")
 
+    def _await_filled_position(
+        self,
+        symbol: str,
+        side: str,
+        entry: Dict[str, Any],
+    ) -> float:
+        """Wait until both the market order and the exchange position are confirmed."""
+        order_id = str(entry.get("id") or "")
+        if not order_id:
+            raise RuntimeError(f"{symbol} 开仓单未返回订单 ID，无法安全创建保护单")
+
+        expected_sign = 1 if side == "long" else -1
+        deadline = time.monotonic() + ENTRY_CONFIRM_TIMEOUT_SECONDS
+        last_status = str(entry.get("status") or "unknown")
+        last_filled = float(entry.get("filled") or 0)
+        last_position = 0.0
+        last_error = ""
+        fetch_order = getattr(self.exchange, "fetch_order", None)
+
+        while True:
+            try:
+                order = fetch_order(order_id, symbol) if callable(fetch_order) else entry
+                last_status = str(order.get("status") or "unknown").lower()
+                last_filled = float(order.get("filled") or 0)
+                last_position = self._position_amount(symbol)
+                order_filled = last_status in {"closed", "filled"} and last_filled > 0
+                position_matches = last_position * expected_sign > 0
+                if order_filled and position_matches:
+                    return abs(last_position)
+                if last_status in {"canceled", "cancelled", "rejected", "expired"}:
+                    raise RuntimeError(
+                        f"{symbol} 开仓单未成交（状态: {last_status}），拒绝创建保护单"
+                    )
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                last_error = str(exc)
+
+            if time.monotonic() >= deadline:
+                detail = (
+                    f"订单状态={last_status}, 已成交数量={last_filled}, "
+                    f"交易所持仓={last_position}"
+                )
+                if last_error:
+                    detail += f", 最近查询错误={last_error}"
+                raise RuntimeError(f"{symbol} 等待开仓成交及仓位确认超时（{detail}）")
+            time.sleep(ENTRY_CONFIRM_POLL_SECONDS)
+
+    def _emergency_close_confirmed_position(self, symbol: str, side: str) -> None:
+        """Close only the verified position created by this attempted entry."""
+        amount = self._position_amount(symbol)
+        if amount == 0:
+            return
+        expected_sign = 1 if side == "long" else -1
+        if amount * expected_sign < 0:
+            raise RuntimeError(f"{symbol} 仓位方向异常，拒绝紧急平仓非本策略仓位")
+        exit_side = "sell" if amount > 0 else "buy"
+        self.exchange.create_order(
+            symbol,
+            "market",
+            exit_side,
+            abs(amount),
+            None,
+            {"positionSide": "BOTH", "reduceOnly": True, "clientOrderId": self._client_id(symbol, "emergency")},
+        )
+
+    def _cancel_entry_order(self, symbol: str, entry: Dict[str, Any]) -> None:
+        """Cancel a still-open entry before flattening any partial fill."""
+        order_id = str(entry.get("id") or "")
+        if not order_id:
+            return
+        try:
+            self.exchange.cancel_order(order_id, symbol)
+        except Exception as exc:
+            self.logger.warning("取消开仓单 %s 失败（可能已全部成交）: %s", order_id, exc)
+
     def open_position(
         self,
         symbol: str,
@@ -280,9 +362,11 @@ class AutoTrader:
             {"positionSide": "BOTH", "clientOrderId": self._client_id(symbol, "entry")},
         )
 
-        filled_amount = float(entry.get("filled") or amount)
         order_ids: List[str] = []
         try:
+            # Binance 的条件单系统可能比市价开仓单晚一步同步仓位；先同时确认
+            # 开仓成交与实际持仓，避免 closePosition/reduceOnly 保护单被拒绝。
+            filled_amount = self._await_filled_position(symbol, side, entry)
             common = {"positionSide": "BOTH", "workingType": "MARK_PRICE", "priceProtect": True}
             stop = self.exchange.create_order(
                 symbol,
@@ -334,16 +418,10 @@ class AutoTrader:
             order_ids.append(str(tp2.get("id") or ""))
         except Exception:
             self.logger.exception("%s 保护单创建失败，执行紧急平仓", symbol)
+            self._cancel_entry_order(symbol, entry)
             self._cancel_orders(symbol, order_ids)
             try:
-                self.exchange.create_order(
-                    symbol,
-                    "market",
-                    exit_side,
-                    filled_amount,
-                    None,
-                    {"positionSide": "BOTH", "reduceOnly": True},
-                )
+                self._emergency_close_confirmed_position(symbol, side)
             except Exception:
                 self.logger.exception("%s 紧急平仓失败，请立即人工检查账户", symbol)
             raise
