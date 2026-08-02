@@ -5,24 +5,8 @@
 
 /go/btc-tracker
 
-# Binance dashboard: keep application source, ignore local/deployment artifacts
-/binance-dashboard/node_modules/
-/binance-dashboard/.next/
-/binance-dashboard/.vinext/
-/binance-dashboard/dist/
-/binance-dashboard/.wrangler/
-/binance-dashboard/.npm-cache/
-/binance-dashboard/coverage/
-/binance-dashboard/outputs/
-/binance-dashboard/work/
-/binance-dashboard/.env*
-!/binance-dashboard/.env.example
-/binance-dashboard/.dev.vars*
-/binance-dashboard/.vercel/
-/binance-dashboard/npm-debug.log*
-/binance-dashboard/yarn-debug.log*
-/binance-dashboard/yarn-error.log*
-/binance-dashboard/pnpm-debug.log*
+# Managed as an independent Git repository
+/binance-dashboard/
 
 # Python bytecode
 **/__pycache__/
@@ -33,4 +17,3 @@
 # OS files
 .DS_Store
 HTML/.DS_Store
-HTML/strategy.html
