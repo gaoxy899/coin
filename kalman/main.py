@@ -17,11 +17,45 @@ from kalman_trend import apply_kalman_trend_indicator, INITIAL_DYNAMIC_STOP_BARS
 from trade_executor import AutoTrader, TradingConfig
 
 
+def load_env_file(path: str) -> list:
+    """Load a local .env file before creating the exchange/configuration.
+
+    The file is authoritative for this standalone bot, so it intentionally
+    overrides same-named variables inherited from an old shell or service.
+    """
+    if not os.path.isfile(path):
+        return []
+
+    loaded_keys = []
+    with open(path, encoding='utf-8') as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if line.startswith('export '):
+                line = line[7:].lstrip()
+            key, separator, value = line.partition('=')
+            key = key.strip()
+            if not separator or not key or not key.replace('_', '').isalnum() or key[0].isdigit():
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                value = value[1:-1]
+            elif ' #' in value:
+                value = value.split(' #', 1)[0].rstrip()
+            os.environ[key] = value
+            loaded_keys.append(key)
+    return loaded_keys
+
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+LOADED_ENV_KEYS = load_env_file(os.path.join(SCRIPT_DIR, '.env'))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('KalmanPersistentAlerts')
+if LOADED_ENV_KEYS:
+    logger.info('已加载 .env 配置（%d 项），其值会覆盖旧的进程环境变量。', len(LOADED_ENV_KEYS))
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(SCRIPT_DIR, 'kalman_state.db')
 MONITORED_SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'DOGE/USDT']
 

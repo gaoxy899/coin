@@ -60,7 +60,7 @@ python3 main.py
 
 配置说明：`KALMAN_TIMEFRAME` 为交易周期，默认 `1h`，可选 `1m`、`3m`、`5m`、`15m`、`30m`、`1h`、`2h`、`4h`、`6h`、`8h`、`12h`、`1d`、`3d`、`1w`。`KALMAN_TP1_FRACTION`（默认 `0.5`）控制 TP1 减仓比例；模拟模式使用 `KALMAN_DRY_RUN_EQUITY_USDT`（默认 `1000`）作为假设账户权益，用于校验固定保证金是否足够及展示占比，不影响固定开仓金额。旧参数 `KALMAN_ORDER_NOTIONAL_USDT` 仍可作为名义仓位上限使用，但建议改用 `KALMAN_MAX_NOTIONAL_USDT`。
 
-全部配置及中文注释见 [kalman/.env.example](kalman/.env.example)。注意：该文件是配置参考，不会被程序自动加载；请通过系统环境变量、部署平台的 Secret 或手动 `source` 后再启动程序。
+全部配置及中文注释见 [kalman/.env.example](kalman/.env.example)。将其复制为 `kalman/.env` 后，`main.py` 会在启动时自动加载，且 `.env` 的值会覆盖旧 shell 或服务进程中的同名变量；请勿将含 API Key 的 `.env` 提交到 Git。
 
 | 配置项 | 中文说明 | 默认值 |
 | --- | --- | --- |
