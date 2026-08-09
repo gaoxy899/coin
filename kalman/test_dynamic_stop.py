@@ -25,9 +25,9 @@ class DynamicStopTest(unittest.TestCase):
             )
         )
 
-    def test_short_requires_two_consecutive_requested_candles_within_36_bars(self):
-        self.open_vals[1:3] = [101.0, 98.0]
-        self.close_vals[1:3] = [100.0, 99.0]
+    def test_short_requires_two_rising_candles_above_slow_line_within_36_bars(self):
+        self.open_vals[1:3] = [98.0, 102.0]
+        self.close_vals[1:3] = [99.0, 103.0]
         self.assertFalse(
             should_exit_by_dynamic_stop(
                 'short', 0, 2, self.open_vals, self.close_vals, self.short_k, self.long_k,
@@ -35,8 +35,8 @@ class DynamicStopTest(unittest.TestCase):
             )
         )
 
-        self.open_vals[1] = 98.0
-        self.close_vals[1] = 99.0
+        self.open_vals[1] = 100.0
+        self.close_vals[1] = 101.0
         self.assertTrue(
             should_exit_by_dynamic_stop(
                 'short', 0, 2, self.open_vals, self.close_vals, self.short_k, self.long_k,
@@ -57,9 +57,9 @@ class DynamicStopTest(unittest.TestCase):
         )
 
     def test_short_upper_shadow_pinbar_on_second_candle_keeps_position_open(self):
-        self.open_vals[1:3] = [97.0, 98.0]
-        self.close_vals[1:3] = [98.0, 99.0]
-        self.high_vals[2] = 104.0  # 5x body (99 - 98) upper shadow
+        self.open_vals[1:3] = [100.0, 101.0]
+        self.close_vals[1:3] = [101.0, 102.0]
+        self.high_vals[2] = 107.0  # 5x body (102 - 101) upper shadow
 
         self.assertFalse(
             should_exit_by_dynamic_stop(

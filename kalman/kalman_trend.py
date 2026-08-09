@@ -141,8 +141,12 @@ def should_exit_by_dynamic_stop(
             # is undefined. The pinbar exception applies only to the second candle.
             return not (body > 0 and lower_shadow >= 5 * body)
         if side == 'short':
-            # Implement the numeric condition supplied for the short position.
-            stop_condition = previous_rises and current_rises
+            stop_condition = (
+                previous_rises
+                and current_rises
+                and close_vals[previous_idx] > long_k[previous_idx]
+                and close_vals[current_idx] > long_k[current_idx]
+            )
             if not stop_condition:
                 return False
             body = abs(close_vals[current_idx] - open_vals[current_idx])
