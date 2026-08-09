@@ -63,6 +63,44 @@ def calculate_atr(df: pd.DataFrame, length: int = 200) -> pd.Series:
     return pd.Series(rma, index=df.index)
 
 
+ADX_PERIOD = 14
+ADX_ENTRY_THRESHOLD = 20.0
+
+
+def calculate_adx_sma(df: pd.DataFrame, period: int = ADX_PERIOD) -> pd.Series:
+    """Calculate ADX using SMA for every smoothing step.
+
+    This intentionally differs from the common Wilder/RMA ADX variant: true
+    range, directional movement, and DX are each smoothed with a simple moving
+    average so the entry filter has the requested SMA definition.
+    """
+    high = df['high']
+    low = df['low']
+    close = df['close']
+
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+    minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+
+    previous_close = close.shift(1)
+    true_range = pd.concat(
+        [
+            high - low,
+            (high - previous_close).abs(),
+            (low - previous_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    sma_true_range = true_range.rolling(period, min_periods=period).mean()
+    plus_di = 100 * plus_dm.rolling(period, min_periods=period).mean() / sma_true_range
+    minus_di = 100 * minus_dm.rolling(period, min_periods=period).mean() / sma_true_range
+    di_sum = plus_di + minus_di
+    dx = (100 * (plus_di - minus_di).abs() / di_sum).where(di_sum != 0)
+    return dx.rolling(period, min_periods=period).mean()
+
+
 INITIAL_DYNAMIC_STOP_BARS = 36
 
 
@@ -121,7 +159,8 @@ def should_exit_by_dynamic_stop(
 def simulate_strategy(df: pd.DataFrame) -> pd.DataFrame:
     """
     Simulates the Kalman pullback entry strategy:
-    - Entry window: touch short_kalman within 30 periods after transition crossover.
+    - A Kalman transition starts an entry phase only when its ADX(14, SMA)
+      confirmation is above 20; no ADX check is made during the later pullback.
     - Risk & reward (1:1, 1:2) SL/TP calculations.
     - First 36 bars after entry use the two-candle dynamic stop; from bar 37,
       exit if both open and close cross short_kalman.
@@ -135,6 +174,8 @@ def simulate_strategy(df: pd.DataFrame) -> pd.DataFrame:
     long_k = df['long_kalman'].values
     bull_trans = df['bullish_transition'].values
     bear_trans = df['bearish_transition'].values
+    raw_bull_trans = df.get('kalman_bullish_transition', df['bullish_transition']).values
+    raw_bear_trans = df.get('kalman_bearish_transition', df['bearish_transition']).values
     trend_up = df['trend_up'].values
     
     strat_pos = np.zeros(n)
@@ -166,6 +207,12 @@ def simulate_strategy(df: pd.DataFrame) -> pd.DataFrame:
             continue
             
         # 1. Crossovers and Reversals
+        if raw_bull_trans[i] or raw_bear_trans[i]:
+            # An unconfirmed crossover invalidates the prior entry phase, but
+            # does not force-close an already protected position.
+            last_cross_idx = -1
+            has_entered_this_phase = True
+
         if bull_trans[i]:
             last_cross_idx = i
             has_entered_this_phase = False
@@ -342,6 +389,7 @@ def apply_kalman_trend_indicator(
     result['half_atr'] = half_atr
     result['short_kalman'] = short_kalman
     result['long_kalman'] = long_kalman
+    result['adx_sma_14'] = calculate_adx_sma(result, ADX_PERIOD)
     
     trend_up = np.zeros(n, dtype=bool)
     trend_col = np.full(n, "", dtype=object)
@@ -350,6 +398,8 @@ def apply_kalman_trend_indicator(
     
     bullish_transition = np.zeros(n, dtype=bool)
     bearish_transition = np.zeros(n, dtype=bool)
+    kalman_bullish_transition = np.zeros(n, dtype=bool)
+    kalman_bearish_transition = np.zeros(n, dtype=bool)
     label_text = np.full(n, None)
     
     lower_box_top = np.full(n, np.nan)
@@ -396,10 +446,13 @@ def apply_kalman_trend_indicator(
         prev_up = trend_up[i - 1] if i > 0 else False
         is_bullish_crossover = is_up and not prev_up
         is_bearish_crossover = prev_up and not is_up
+        adx_confirms_trend = result['adx_sma_14'].iloc[i] > ADX_ENTRY_THRESHOLD
         
         if is_bullish_crossover:
-            bullish_transition[i] = True
-            label_text[i] = f"🡹 {round(close_vals[i], 1)}"
+            kalman_bullish_transition[i] = True
+            if adx_confirms_trend:
+                bullish_transition[i] = True
+                label_text[i] = f"🡹 {round(close_vals[i], 1)}"
             curr_low_box = {
                 'top': low_vals[i] + (half_atr[i] if not np.isnan(half_atr[i]) else 0),
                 'bottom': low_vals[i],
@@ -408,8 +461,10 @@ def apply_kalman_trend_indicator(
             }
             
         if is_bearish_crossover:
-            bearish_transition[i] = True
-            label_text[i] = f"{round(close_vals[i], 1)} 🢃"
+            kalman_bearish_transition[i] = True
+            if adx_confirms_trend:
+                bearish_transition[i] = True
+                label_text[i] = f"{round(close_vals[i], 1)} 🢃"
             curr_up_box = {
                 'top': high_vals[i],
                 'bottom': high_vals[i] - (half_atr[i] if not np.isnan(half_atr[i]) else 0),
@@ -456,6 +511,8 @@ def apply_kalman_trend_indicator(
     result['candle_col'] = candle_col
     result['bullish_transition'] = bullish_transition
     result['bearish_transition'] = bearish_transition
+    result['kalman_bullish_transition'] = kalman_bullish_transition
+    result['kalman_bearish_transition'] = kalman_bearish_transition
     result['label_text'] = label_text
     
     result['lower_box_top'] = lower_box_top

@@ -13,7 +13,12 @@ import json
 import os
 import pandas as pd
 import numpy as np
-from kalman_trend import apply_kalman_trend_indicator, INITIAL_DYNAMIC_STOP_BARS, should_exit_by_dynamic_stop
+from kalman_trend import (
+    ADX_ENTRY_THRESHOLD,
+    apply_kalman_trend_indicator,
+    INITIAL_DYNAMIC_STOP_BARS,
+    should_exit_by_dynamic_stop,
+)
 from trade_executor import AutoTrader, TradingConfig
 
 
@@ -57,7 +62,7 @@ if LOADED_ENV_KEYS:
     logger.info('已加载 .env 配置（%d 项），其值会覆盖旧的进程环境变量。', len(LOADED_ENV_KEYS))
 
 DB_PATH = os.path.join(SCRIPT_DIR, 'kalman_state.db')
-MONITORED_SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'DOGE/USDT']
+MONITORED_SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'DOGE/USDT', 'HYPE/USDT:USDT']
 
 exchange = ccxt.binance({
     'apiKey': os.getenv('BINANCE_API_KEY', ''),
@@ -81,6 +86,20 @@ if trading_config.testnet:
 trader = AutoTrader(exchange, trading_config, logger)
 TIMEFRAME_LABEL = trading_config.timeframe.upper()
 POSITION_CHECK_INTERVAL_SECONDS = 5 * 60
+SIGNAL_CLOSE_DELAY_SECONDS = 60
+
+
+def next_signal_run_timestamp(now: float, timeframe_seconds: int) -> float:
+    """Return the first K-line signal run after ``now``."""
+    next_close = (math.floor(now / timeframe_seconds) + 1) * timeframe_seconds
+    return next_close + SIGNAL_CLOSE_DELAY_SECONDS
+
+
+def advance_scheduled_timestamp(timestamp: float, interval_seconds: int, now: float) -> float:
+    """Advance a due schedule without recalculating and skipping an execution."""
+    while timestamp <= now:
+        timestamp += interval_seconds
+    return timestamp
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -426,6 +445,37 @@ def fetch_symbol_data(symbol: str) -> pd.DataFrame:
     df.drop(columns=['timestamp'], inplace=True)
     return df
 
+
+def restore_trend_state(state: dict, df: pd.DataFrame, symbol: str) -> bool:
+    """Restore a missed crossover after a restart from the closed-candle history."""
+    closed_df = df.iloc[:-1]
+    transitions = closed_df[
+        closed_df['bullish_transition'] | closed_df['bearish_transition']
+    ]
+    if transitions.empty:
+        return False
+
+    latest_cross_time = transitions.index[-1]
+    latest_cross_time_str = latest_cross_time.strftime('%Y-%m-%d %H:%M:%S')
+    stored_cross_time = state.get('last_cross_time', '')
+    # Do not overwrite a state that already knows this crossover or a newer one.
+    if stored_cross_time and stored_cross_time >= latest_cross_time_str:
+        return False
+
+    latest_cross = transitions.iloc[-1]
+    state['trend'] = 'bullish' if latest_cross['bullish_transition'] else 'bearish'
+    state['last_cross_time'] = latest_cross_time_str
+    # A recovered flat state may still use the remaining 30-bar pullback window.
+    if state.get('position') == 'flat':
+        state['has_entered_this_phase'] = 0
+    logger.info(
+        '%s 已从历史 K 线恢复%s趋势，交叉时间: %s',
+        symbol,
+        '多头' if state['trend'] == 'bullish' else '空头',
+        latest_cross_time_str,
+    )
+    return True
+
 def run_alert_check(alerted_timestamps):
     for symbol in MONITORED_SYMBOLS:
         try:
@@ -444,6 +494,7 @@ def run_alert_check(alerted_timestamps):
             state = get_symbol_state(symbol)
             if not reconcile_position_state(state, symbol, alerted_timestamps):
                 continue
+            restore_trend_state(state, df, symbol)
 
             idx_c = -2
             time_c = df.index[idx_c]
@@ -456,14 +507,17 @@ def run_alert_check(alerted_timestamps):
             high_val = df['high'].iloc[idx_c]
             open_val = df['open'].iloc[idx_c]
             close_val = df['close'].iloc[idx_c]
+            adx_val = df['adx_sma_14'].iloc[idx_c]
 
             bullish_trans = df['bullish_transition'].iloc[idx_c]
             bearish_trans = df['bearish_transition'].iloc[idx_c]
+            raw_bullish_trans = df['kalman_bullish_transition'].iloc[idx_c]
+            raw_bearish_trans = df['kalman_bearish_transition'].iloc[idx_c]
 
             if bullish_trans:
                 alert_id = f"{symbol}_bullish_{time_c_str}"
                 if alert_id not in alerted_timestamps:
-                    sendMsg(f"🟢 【{symbol} {TIMEFRAME_LABEL} 多头趋势】\n时间: {time_c_str}\n收盘价: {fmt_p(close_val)}\n系统已产生金叉🡹转向信号。")
+                    sendMsg(f"🟢 【{symbol} {TIMEFRAME_LABEL} 多头趋势】\n时间: {time_c_str}\n收盘价: {fmt_p(close_val)}\nADX(14, SMA): {fmt_p(adx_val)}\n系统已产生金叉🡹转向信号，趋势强度确认成立。")
                     alerted_timestamps.add(alert_id)
                 state['trend'] = 'bullish'
                 state['last_cross_time'] = time_c_str
@@ -476,7 +530,7 @@ def run_alert_check(alerted_timestamps):
             elif bearish_trans:
                 alert_id = f"{symbol}_bearish_{time_c_str}"
                 if alert_id not in alerted_timestamps:
-                    sendMsg(f"🔴 【{symbol} {TIMEFRAME_LABEL} 空头趋势】\n时间: {time_c_str}\n收盘价: {fmt_p(close_val)}\n系统已产生死叉🢃转向信号。")
+                    sendMsg(f"🔴 【{symbol} {TIMEFRAME_LABEL} 空头趋势】\n时间: {time_c_str}\n收盘价: {fmt_p(close_val)}\nADX(14, SMA): {fmt_p(adx_val)}\n系统已产生死叉🢃转向信号，趋势强度确认成立。")
                     alerted_timestamps.add(alert_id)
                 state['trend'] = 'bearish'
                 state['last_cross_time'] = time_c_str
@@ -485,6 +539,20 @@ def run_alert_check(alerted_timestamps):
                     details = calc_exit_details(state, close_val, time_c_str)
                     sendMsg(f"🚪 【{symbol} {TIMEFRAME_LABEL} 跨周期平仓】\n时间: {time_c_str}\n价格: {fmt_p(close_val)}\n原因: 趋势改变 (多单被动防守平仓)。{details}")
                     close_position_state(state, symbol, '趋势反转，多单平仓')
+
+            elif raw_bullish_trans or raw_bearish_trans:
+                # A Kalman crossover without ADX confirmation is not a new
+                # tradable trend and must not leave the preceding entry phase active.
+                state['trend'] = 'none'
+                state['last_cross_time'] = ''
+                state['has_entered_this_phase'] = 1
+                logger.info(
+                    '%s 卡尔曼%s出现，但 ADX(14, SMA)=%.2f 未超过 %.1f；不确认趋势，也不启用回调开仓。',
+                    symbol,
+                    '金叉' if raw_bullish_trans else '死叉',
+                    adx_val,
+                    ADX_ENTRY_THRESHOLD,
+                )
 
             if state['position'] == 'long':
                 dynamic_reason = dynamic_stop_reason(df, state, len(df) - 2)
@@ -598,17 +666,18 @@ def main_loop():
     
     run_alert_check(alerted_timestamps)
     sendMsg('kalman_trend 策略启动 \n @jp.ora')
+    timeframe_seconds = exchange.parse_timeframe(trading_config.timeframe)
+    now = time.time()
+    next_signal_run = next_signal_run_timestamp(now, timeframe_seconds)
     next_position_check = (
-        math.floor(time.time() / POSITION_CHECK_INTERVAL_SECONDS) + 1
+        math.floor(now / POSITION_CHECK_INTERVAL_SECONDS) + 1
     ) * POSITION_CHECK_INTERVAL_SECONDS
     
     while True:
         try:
-            # 在下一根 K 线收盘后 60 秒执行，确保只使用已闭合的 K 线。
-            timeframe_seconds = exchange.parse_timeframe(trading_config.timeframe)
-            next_close_timestamp = (math.floor(time.time() / timeframe_seconds) + 1) * timeframe_seconds
-            next_signal_run_timestamp = next_close_timestamp + 60
-            wake_timestamp = min(next_signal_run_timestamp, next_position_check)
+            # 信号任务与五分钟持仓巡检使用独立的持久时间点；巡检唤醒不能覆盖
+            # “K 线收盘后 60 秒”的信号任务。
+            wake_timestamp = min(next_signal_run, next_position_check)
             sleep_seconds = max(0, wake_timestamp - time.time())
             next_run = datetime.datetime.fromtimestamp(wake_timestamp)
             
@@ -616,19 +685,22 @@ def main_loop():
                 '程序进入休眠，将在 %s（%.1f 分钟后）唤醒；新 K 线信号在 %s 检查，持仓每 5 分钟巡检。',
                 next_run.strftime('%Y-%m-%d %H:%M:%S'),
                 sleep_seconds / 60,
-                datetime.datetime.fromtimestamp(next_signal_run_timestamp).strftime('%Y-%m-%d %H:%M:%S'),
+                datetime.datetime.fromtimestamp(next_signal_run).strftime('%Y-%m-%d %H:%M:%S'),
             )
             time.sleep(sleep_seconds)
 
             now = time.time()
             if now >= next_position_check:
                 run_position_check(alerted_timestamps)
-                next_position_check = (
-                    math.floor(now / POSITION_CHECK_INTERVAL_SECONDS) + 1
-                ) * POSITION_CHECK_INTERVAL_SECONDS
+                next_position_check = advance_scheduled_timestamp(
+                    next_position_check, POSITION_CHECK_INTERVAL_SECONDS, now
+                )
 
-            if now >= next_signal_run_timestamp:
+            if now >= next_signal_run:
                 run_alert_check(alerted_timestamps)
+                next_signal_run = advance_scheduled_timestamp(
+                    next_signal_run, timeframe_seconds, now
+                )
             
             if len(alerted_timestamps) > 500:
                 to_remove = list(alerted_timestamps)[:-200]

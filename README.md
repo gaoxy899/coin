@@ -1,5 +1,9 @@
 ## BTC 交易策略
 
+### R2 图片管理器
+
+`r2-image-manager/` 是 React + Cloudflare Pages Functions + R2 的图片管理项目，包含上传、列表、预览、删除和管理令牌登录。部署说明见 [r2-image-manager/README.md](r2-image-manager/README.md)。
+
 ### go 
 获取btc 价格、OI、CVD，按分钟存入数据库
 运行
@@ -26,6 +30,7 @@ DB_HOST=dbhost DB_USER=dbuser DB_PASSWORD=password ./run.sh
 - 通过阻力支撑箱体算法，自动捕捉趋势反转点（金叉/死叉）以及通道回测阻力/支撑有效信号。
 - 集成 Telegram 警报，发现有效闭合信号后即时推送通知并带有防重复推送机制。
 - 可选 Binance USDT 永续自动交易：信号触发后市价开仓，并立即挂出基于标记价格的硬止损、TP1（默认减仓 50%）与 TP2（平掉剩余仓位）。
+- 卡尔曼金叉/死叉出现时，额外要求 ADX(14) 大于 20 才确认趋势并启用后续回调开仓；ADX 的 TR、方向动量与 DX 均使用 SMA 平滑，以过滤趋势强度不足的盘整行情。
 - 趋势反转或 K 线跌破/升破卡尔曼快线时，自动撤销本策略保护单并市价平仓。
 
 安装依赖：
