@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "r2-image-manager",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-08-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "r2_buckets": [
+    {
+      "binding": "IMAGES",
+      "bucket_name": "images"
+    }
+  ]
+}
