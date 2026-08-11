@@ -123,14 +123,11 @@ def should_exit_by_dynamic_stop(
     bars_since_entry = current_idx - entry_idx
     if 2 <= bars_since_entry <= INITIAL_DYNAMIC_STOP_BARS:
         previous_idx = current_idx - 1
-        previous_rises = open_vals[previous_idx] < close_vals[previous_idx]
-        current_rises = open_vals[current_idx] < close_vals[current_idx]
         if side == 'long':
-            # Implement the numeric condition supplied for the long position.
             stop_condition = (
-                previous_rises
-                and current_rises
+                open_vals[previous_idx] < long_k[previous_idx]
                 and close_vals[previous_idx] < long_k[previous_idx]
+                and open_vals[current_idx] < long_k[current_idx]
                 and close_vals[current_idx] < long_k[current_idx]
             )
             if not stop_condition:
@@ -142,9 +139,9 @@ def should_exit_by_dynamic_stop(
             return not (body > 0 and lower_shadow >= 5 * body)
         if side == 'short':
             stop_condition = (
-                previous_rises
-                and current_rises
+                open_vals[previous_idx] > long_k[previous_idx]
                 and close_vals[previous_idx] > long_k[previous_idx]
+                and open_vals[current_idx] > long_k[current_idx]
                 and close_vals[current_idx] > long_k[current_idx]
             )
             if not stop_condition:

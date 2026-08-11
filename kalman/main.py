@@ -365,8 +365,8 @@ def dynamic_stop_reason(df: pd.DataFrame, state: dict, current_idx: int) -> str:
 
     if is_initial_window:
         if side == 'long':
-            return '前 36 根 K 线内：连续两根开盘低于收盘、且收盘跌破卡尔曼慢线'
-        return '前 36 根 K 线内：连续两根开盘低于收盘、且收盘升破卡尔曼慢线'
+            return '前 36 根 K 线内：连续两根开盘和收盘均跌破卡尔曼慢线'
+        return '前 36 根 K 线内：连续两根开盘和收盘均升破卡尔曼慢线'
     if side == 'long':
         return '超过 36 根 K 线：开收盘全面跌穿卡尔曼快线（原有自适应止损）'
     return '超过 36 根 K 线：开收盘全面升破卡尔曼快线（原有自适应止损）'
