@@ -1,0 +1,5 @@
+numpy>=1.24,<3
+pandas>=1.5,<3
+requests>=2.31,<3
+pytest>=7,<9
+backports.zoneinfo>=0.2.1; python_version < "3.9"
