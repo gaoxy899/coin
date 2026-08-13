@@ -3,6 +3,7 @@ import unittest
 from main import (
     SIGNAL_CLOSE_DELAY_SECONDS,
     advance_scheduled_timestamp,
+    dynamic_stop_reason,
     next_signal_run_timestamp,
     restore_trend_state,
 )
@@ -37,6 +38,26 @@ class MainScheduleTest(unittest.TestCase):
         self.assertEqual(state['trend'], 'bullish')
         self.assertEqual(state['last_cross_time'], '2026-08-04 07:00:00')
         self.assertEqual(state['has_entered_this_phase'], 0)
+
+    def test_first_completed_candle_after_entry_does_not_fall_back_to_fast_line_stop(self):
+        index = pd.date_range('2026-08-13 04:30:00', periods=4, freq='15min', tz='Asia/Taipei')
+        df = pd.DataFrame(
+            {
+                # The 05:00 candle is fully above the fast line, which would
+                # trigger the legacy short stop if the initial-window boundary
+                # were handled incorrectly.
+                'open': [63500.0, 63540.0, 63550.0, 63560.0],
+                'close': [63510.0, 63543.0, 63555.4, 63565.0],
+                'high': [63520.0, 63550.0, 63560.0, 63570.0],
+                'low': [63490.0, 63530.0, 63540.0, 63550.0],
+                'short_kalman': [63530.0, 63540.0, 63545.0, 63550.0],
+                'long_kalman': [63600.0, 63600.0, 63600.0, 63600.0],
+            },
+            index=index,
+        )
+        state = {'position': 'short', 'entry_time': '2026-08-13 04:45:00'}
+
+        self.assertEqual(dynamic_stop_reason(df, state, 2), '')
 
 
 if __name__ == '__main__':

@@ -121,11 +121,18 @@ def should_exit_by_dynamic_stop(
     two-candle rule. From bar 37 onwards, it keeps the prior fast-line stop.
     """
     bars_since_entry = current_idx - entry_idx
-    if 2 <= bars_since_entry <= INITIAL_DYNAMIC_STOP_BARS:
+    if 0 <= bars_since_entry <= INITIAL_DYNAMIC_STOP_BARS:
+        # Fewer than two completed candles cannot satisfy a consecutive
+        # two-candle condition, and must not fall through to the fast-line
+        # stop before the 36-bar initial window has elapsed.
+        if bars_since_entry < 2:
+            return False
         previous_idx = current_idx - 1
         if side == 'long':
             stop_condition = (
-                open_vals[previous_idx] < long_k[previous_idx]
+                open_vals[previous_idx] < close_vals[previous_idx]
+                and open_vals[current_idx] < close_vals[current_idx]
+                and open_vals[previous_idx] < long_k[previous_idx]
                 and close_vals[previous_idx] < long_k[previous_idx]
                 and open_vals[current_idx] < long_k[current_idx]
                 and close_vals[current_idx] < long_k[current_idx]
@@ -139,7 +146,9 @@ def should_exit_by_dynamic_stop(
             return not (body > 0 and lower_shadow >= 5 * body)
         if side == 'short':
             stop_condition = (
-                open_vals[previous_idx] > long_k[previous_idx]
+                open_vals[previous_idx] > close_vals[previous_idx]
+                and open_vals[current_idx] > close_vals[current_idx]
+                and open_vals[previous_idx] > long_k[previous_idx]
                 and close_vals[previous_idx] > long_k[previous_idx]
                 and open_vals[current_idx] > long_k[current_idx]
                 and close_vals[current_idx] > long_k[current_idx]

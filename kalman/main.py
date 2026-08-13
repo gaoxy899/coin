@@ -347,7 +347,11 @@ def dynamic_stop_reason(df: pd.DataFrame, state: dict, current_idx: int) -> str:
     """Return a dynamic-stop reason for the current closed candle, if triggered."""
     side = state.get('position')
     entry_idx = entry_bar_index(df, state.get('entry_time', ''))
-    is_initial_window = entry_idx >= 0 and 2 <= current_idx - entry_idx <= INITIAL_DYNAMIC_STOP_BARS
+    # The first two completed candles cannot satisfy a two-candle stop yet, but
+    # they are still part of the 36-bar initial window.  Keeping them in this
+    # window prevents an incorrect immediate fallback to the legacy fast-line
+    # stop after entry.
+    is_initial_window = entry_idx >= 0 and 0 <= current_idx - entry_idx <= INITIAL_DYNAMIC_STOP_BARS
     effective_entry_idx = entry_idx if is_initial_window else current_idx - INITIAL_DYNAMIC_STOP_BARS - 1
 
     if not should_exit_by_dynamic_stop(
@@ -365,8 +369,8 @@ def dynamic_stop_reason(df: pd.DataFrame, state: dict, current_idx: int) -> str:
 
     if is_initial_window:
         if side == 'long':
-            return '前 36 根 K 线内：连续两根开盘和收盘均跌破卡尔曼慢线'
-        return '前 36 根 K 线内：连续两根开盘和收盘均升破卡尔曼慢线'
+            return '前 36 根 K 线内：连续两根开盘低于收盘，且开盘和收盘均跌破卡尔曼慢线'
+        return '前 36 根 K 线内：连续两根开盘高于收盘，且开盘和收盘均升破卡尔曼慢线'
     if side == 'long':
         return '超过 36 根 K 线：开收盘全面跌穿卡尔曼快线（原有自适应止损）'
     return '超过 36 根 K 线：开收盘全面升破卡尔曼快线（原有自适应止损）'
