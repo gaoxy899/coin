@@ -15,6 +15,7 @@ from macd_divergence import (
     send_telegram_message,
     signal_on_latest_closed_candle,
     simulate_historical_as_of,
+    simulate_historical_at_time,
 )
 
 
@@ -58,6 +59,14 @@ def test_historical_simulation_hides_the_requested_newest_candles() -> None:
     simulated = simulate_historical_as_of(frame, 7)
     assert len(simulated) == 43
     assert simulated.iloc[-1]["open_time"] == frame.iloc[-8]["open_time"]
+
+
+def test_historical_as_of_includes_the_exact_requested_timezone_aware_candle() -> None:
+    frame = _fixture(np.full(50, 0.2))
+    target = frame.iloc[20]["open_time"]
+    simulated = simulate_historical_at_time(frame, target.isoformat())
+    assert len(simulated) == 21
+    assert simulated.iloc[-1]["open_time"] == target
 
 
 def test_price_led_bullish_divergence_after_a_golden_cross() -> None:

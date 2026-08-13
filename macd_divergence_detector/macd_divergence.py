@@ -240,6 +240,25 @@ def simulate_historical_as_of(frame: pd.DataFrame, backtest_offset: int) -> pd.D
     return frame.iloc[:-backtest_offset].copy().reset_index(drop=True)
 
 
+def simulate_historical_at_time(frame: pd.DataFrame, as_of: str) -> pd.DataFrame:
+    """Truncate at an exact timezone-aware candle open time, without future data.
+
+    Examples: ``2026-08-12T22:00:00Z`` and
+    ``2026-08-13T06:00:00+08:00`` select the same candle.
+    """
+    target = pd.Timestamp(as_of)
+    if target.tzinfo is None:
+        raise ValueError("--as-of must include a timezone, e.g. 2026-08-12T22:00:00Z")
+    target = target.tz_convert("UTC")
+    matches = frame.index[frame["open_time"] == target]
+    if matches.empty:
+        raise ValueError(
+            f"No closed candle found for --as-of {as_of}; "
+            f"available {frame['open_time'].min()} to {frame['open_time'].max()}"
+        )
+    return frame.iloc[:matches[0] + 1].copy().reset_index(drop=True)
+
+
 def _cross_indices(data: pd.DataFrame, kind: Literal["death", "golden"]) -> list[int]:
     """Return closed-candle MACD/Signal crossover indices."""
     macd, signal = data["macd"].to_numpy(), data["macd_signal"].to_numpy()
@@ -604,12 +623,20 @@ def check_market(
     config: DetectorConfig,
     *,
     backtest_offset: int | None = None,
+    as_of: str | None = None,
 ) -> tuple[pd.DataFrame, Divergence | None]:
     """Fetch one market and return either the current-bar or backtest signal."""
+    if backtest_offset is not None and as_of is not None:
+        raise ValueError("Use either --backtest-offset or --as-of, not both")
     raw_data = fetch_futures_klines(symbol, interval, limit)
-    data = simulate_historical_as_of(raw_data, backtest_offset) if backtest_offset is not None else raw_data
+    if as_of is not None:
+        data = simulate_historical_at_time(raw_data, as_of)
+    elif backtest_offset is not None:
+        data = simulate_historical_as_of(raw_data, backtest_offset)
+    else:
+        data = raw_data
     data = add_indicators(data, config)
-    if backtest_offset is not None:
+    if backtest_offset is not None or as_of is not None:
         return data, latest_divergence(detect_regular_divergences(data, config))
     return data, signal_on_latest_closed_candle(data, config)
 
@@ -621,13 +648,15 @@ def run_checks(
     detector: DetectorConfig,
     *,
     backtest_offset: int | None = None,
+    as_of: str | None = None,
 ) -> None:
     """Check every configured symbol/interval once and print only new signals."""
     for symbol in symbols:
         for interval in intervals:
             try:
                 data, signal = check_market(
-                    symbol, interval, monitor.kline_limit, detector, backtest_offset=backtest_offset,
+                    symbol, interval, monitor.kline_limit, detector,
+                    backtest_offset=backtest_offset, as_of=as_of,
                 )
                 as_of = data.iloc[-1]["close_time"].to_pydatetime().astimezone(ZoneInfo(monitor.display_timezone))
                 prefix = f"[{datetime.now(ZoneInfo(monitor.display_timezone)):%Y-%m-%d %H:%M:%S}] {symbol} {interval}"
@@ -636,10 +665,10 @@ def run_checks(
                     print(f"{prefix} {signal_text}", flush=True)
                     # Historical replay is for validation only and must never
                     # notify a real chat. Live checks only emit current-bar signals.
-                    if backtest_offset is None:
+                    if backtest_offset is None and as_of is None:
                         send_telegram_message(f"{symbol} {interval}\n{signal_text}", monitor)
                 else:
-                    scope = "backtest" if backtest_offset is not None else "latest closed candle"
+                    scope = "historical backtest" if backtest_offset is not None or as_of is not None else "latest closed candle"
                     print(f"{prefix} no divergence on {scope}; as_of={as_of:%Y-%m-%d %H:%M %Z}", flush=True)
             except Exception as error:  # Keep other configured markets alive after an API failure.
                 print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {symbol} {interval} ERROR: {error}", flush=True)
@@ -683,6 +712,10 @@ def main() -> None:
         "--backtest-offset", type=int,
         help="Optional historical simulation: hide newest candles, print the latest signal at that historical point, then exit",
     )
+    parser.add_argument(
+        "--as-of",
+        help="Exact candle open time, e.g. 2026-08-12T22:00:00Z or 2026-08-13T06:00:00+08:00",
+    )
     args = parser.parse_args()
 
     monitor = load_monitor_config(args.env)
@@ -697,7 +730,11 @@ def main() -> None:
     detector = DetectorConfig()
     print("filters=", asdict(detector), flush=True)
 
-    if args.backtest_offset is not None:
+    if args.as_of and args.backtest_offset is not None:
+        parser.error("Use either --backtest-offset or --as-of, not both")
+    if args.as_of:
+        run_checks(symbols, intervals, monitor, detector, as_of=args.as_of)
+    elif args.backtest_offset is not None:
         if args.backtest_offset < 0:
             parser.error("--backtest-offset must be zero or greater")
         run_checks(symbols, intervals, monitor, detector, backtest_offset=args.backtest_offset)

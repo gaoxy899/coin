@@ -70,6 +70,18 @@ python3 macd_divergence.py --once --symbol ETHUSDT --interval 1h
 python3 macd_divergence.py --symbol ETHUSDT --interval 1h --backtest-offset 33
 ```
 
+也支持和 Pin Bar 相同的精确历史时间验证。`--as-of` 与 `--backtest-offset` 互斥，时间必须带时区：
+
+```bash
+# UTC
+python3 macd_divergence.py --symbol DOGEUSDT --interval 1h --as-of 2026-08-12T22:00:00Z
+
+# 等价的东八区时间
+python3 macd_divergence.py --symbol DOGEUSDT --interval 1h --as-of 2026-08-13T06:00:00+08:00
+```
+
+选中 K 线会保留，其后的 K 线均会排除后再计算 MACD、ATR 和背离，因而不使用未来数据。
+
 ## 检测规则
 
 - 两个价格极值至少间隔 20 根 K 线、至多 120 根；
