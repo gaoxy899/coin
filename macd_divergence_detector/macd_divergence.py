@@ -62,8 +62,12 @@ class DetectorConfig:
 @dataclass(frozen=True)
 class Divergence:
     kind: Literal["bearish", "bullish"]
+    # ``first_time``/``second_time`` are price-extreme timestamps. MACD can
+    # reach its extrema a few candles earlier/later, so preserve both times.
     first_time: pd.Timestamp
     second_time: pd.Timestamp
+    first_macd_time: pd.Timestamp
+    second_macd_time: pd.Timestamp
     first_price: float
     second_price: float
     first_macd: float
@@ -402,6 +406,8 @@ def _build_divergence(
         kind=kind,
         first_time=data.at[p1_index, "open_time"],
         second_time=data.at[p2_index, "open_time"],
+        first_macd_time=data.at[m1_index, "open_time"],
+        second_macd_time=data.at[m2_index, "open_time"],
         first_price=float(p1), second_price=float(p2),
         first_macd=float(m1), second_macd=float(m2), bars_between=bars,
         confirmation_time=data.at[confirmation_index, "open_time"],
@@ -457,6 +463,8 @@ def _build_bullish_recovery_divergence(
         kind="bullish",
         first_time=data.at[p1_index, "open_time"],
         second_time=data.at[p2_index, "open_time"],
+        first_macd_time=data.at[m1_index, "open_time"],
+        second_macd_time=data.at[p2_index, "open_time"],
         first_price=float(data.at[p1_index, "low"]),
         second_price=float(data.at[p2_index, "low"]),
         first_macd=float(m1), second_macd=float(m2), bars_between=bars,
@@ -589,9 +597,11 @@ def format_signal(signal: Divergence, display_timezone: str) -> str:
         return value.to_pydatetime().astimezone(tz).strftime("%Y-%m-%d %H:%M")
 
     return (
-        f"{signal.kind:7} {stamp(signal.first_time)} -> {stamp(signal.second_time)} {display_timezone} | "
+        f"{signal.kind:7} | "
+        f"price_extreme={stamp(signal.first_time)} -> {stamp(signal.second_time)} {display_timezone} | "
         f"price {signal.first_price:.6g} -> {signal.second_price:.6g} | "
-        f"MACD {signal.first_macd:.6g} -> {signal.second_macd:.6g} | bars={signal.bars_between} | "
+        f"green_MACD_extreme={stamp(signal.first_macd_time)} -> {stamp(signal.second_macd_time)} {display_timezone} | "
+        f"MACD {signal.first_macd:.6g} -> {signal.second_macd:.6g} | price_bars={signal.bars_between} | "
         f"confirmed={stamp(signal.confirmation_time)} | MACD_cross={stamp(signal.macd_cross_time)}"
     )
 

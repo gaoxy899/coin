@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor Binance futures for MACD divergence confirmed by a same-side pin bar.
+"""Monitor standalone and combined MACD-divergence / Pin-Bar signals.
 
 This is an orchestration layer. It imports the independent MACD-divergence and
 pin-bar detectors without changing either detector's rules.
@@ -48,7 +48,10 @@ class MonitorConfig:
     kline_limit: int
     display_timezone: str
     check_on_start: bool
+    alert_mode: Literal["separate", "combined", "both"]
     pinbar_max_bars_after_divergence: int
+    api_retry_count: int
+    api_retry_delay_seconds: float
     state_file: Path
     telegram_enabled: bool
     telegram_bot_token: str | None
@@ -62,6 +65,14 @@ class PendingDivergence:
     confirmation_time: str
     expires_after_open_time: str
     description: str
+
+
+@dataclass
+class MonitorState:
+    """Persistent pending combo confirmations and already-sent alert keys."""
+
+    pending: dict[str, PendingDivergence]
+    sent: set[str]
 
 
 def _parse_bool(value: str, name: str) -> bool:
@@ -104,8 +115,11 @@ def load_env(path: str | Path) -> dict[str, str]:
 def load_config(path: str | Path) -> MonitorConfig:
     values = load_env(path)
 
+    def setting(name: str, default: str = "") -> str:
+        return os.environ.get(name, values.get(name, default)).strip()
+
     def required(name: str) -> str:
-        value = values.get(name, os.environ.get(name, "")).strip()
+        value = setting(name)
         if not value:
             raise ValueError(f"Missing required setting: {name}")
         return value
@@ -115,43 +129,59 @@ def load_config(path: str | Path) -> MonitorConfig:
         interval_to_seconds(interval)
     delay, limit = int(required("CLOSE_DELAY_MINUTES")), int(required("KLINE_LIMIT"))
     max_after = int(required("PINBAR_MAX_BARS_AFTER_DIVERGENCE"))
-    if delay < 0 or max_after < 0:
-        raise ValueError("CLOSE_DELAY_MINUTES and PINBAR_MAX_BARS_AFTER_DIVERGENCE must be zero or greater")
+    alert_mode = setting("ALERT_MODE", "separate").lower()
+    retries = int(setting("API_RETRY_COUNT", "3"))
+    retry_delay = float(setting("API_RETRY_DELAY_SECONDS", "2"))
+    if alert_mode not in {"separate", "combined", "both"}:
+        raise ValueError("ALERT_MODE must be separate, combined, or both")
+    if delay < 0 or max_after < 0 or retries < 1 or retry_delay < 0:
+        raise ValueError("CLOSE_DELAY_MINUTES/PINBAR_MAX_BARS_AFTER_DIVERGENCE >= 0; API_RETRY_COUNT >= 1; API_RETRY_DELAY_SECONDS >= 0")
     if not 20 <= limit <= 1500:
         raise ValueError("KLINE_LIMIT must be between 20 and 1500")
-    timezone_name = values.get("DISPLAY_TIMEZONE", "Asia/Taipei")
+    timezone_name = setting("DISPLAY_TIMEZONE", "Asia/Taipei")
     ZoneInfo(timezone_name)
-    enabled = _parse_bool(values.get("TELEGRAM_ENABLED", "false"), "TELEGRAM_ENABLED")
-    token, chat_id = values.get("TELEGRAM_BOT_TOKEN", "").strip() or None, values.get("TELEGRAM_CHAT_ID", "").strip() or None
+    enabled = _parse_bool(setting("TELEGRAM_ENABLED", "false"), "TELEGRAM_ENABLED")
+    token, chat_id = setting("TELEGRAM_BOT_TOKEN") or None, setting("TELEGRAM_CHAT_ID") or None
     if enabled and (not token or not chat_id):
         raise ValueError("TELEGRAM_ENABLED=true requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
     return MonitorConfig(
         symbols=_csv(required("SYMBOLS"), uppercase=True), intervals=intervals,
         close_delay_minutes=delay, kline_limit=limit, display_timezone=timezone_name,
-        check_on_start=_parse_bool(values.get("CHECK_ON_START", "false"), "CHECK_ON_START"),
+        check_on_start=_parse_bool(setting("CHECK_ON_START", "false"), "CHECK_ON_START"),
+        alert_mode=alert_mode,  # type: ignore[arg-type]
         pinbar_max_bars_after_divergence=max_after,
-        state_file=Path(values.get("STATE_FILE", ".macd_pinbar_state.json")),
+        api_retry_count=retries, api_retry_delay_seconds=retry_delay,
+        state_file=Path(setting("STATE_FILE", ".macd_pinbar_state.json")),
         telegram_enabled=enabled, telegram_bot_token=token, telegram_chat_id=chat_id,
-        telegram_mention=values.get("TELEGRAM_MENTION", "").strip(),
+        telegram_mention=setting("TELEGRAM_MENTION"),
     )
 
 
-def load_state(path: Path) -> dict[str, PendingDivergence]:
+def load_state(path: Path) -> MonitorState:
     if not path.is_file():
-        return {}
+        return MonitorState({}, set())
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        return {key: PendingDivergence(**value) for key, value in payload.items()}
-    except (OSError, json.JSONDecodeError, TypeError):
+        # Accept state files created by the former combined-only monitor.
+        if "pending" not in payload:
+            return MonitorState({key: PendingDivergence(**value) for key, value in payload.items()}, set())
+        return MonitorState(
+            {key: PendingDivergence(**value) for key, value in payload.get("pending", {}).items()},
+            set(payload.get("sent", [])),
+        )
+    except (OSError, json.JSONDecodeError, TypeError, AttributeError):
         # Do not crash a market monitor over an interrupted/corrupt state write.
-        return {}
+        return MonitorState({}, set())
 
 
-def save_state(path: Path, state: dict[str, PendingDivergence]) -> None:
-    """Atomically persist pending signals so a restart does not lose them."""
+def save_state(path: Path, state: MonitorState) -> None:
+    """Atomically persist pending and sent signals so restarts do not repeat alerts."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(f"{path.suffix}.tmp")
-    temporary.write_text(json.dumps({key: vars(value) for key, value in state.items()}, indent=2), encoding="utf-8")
+    temporary.write_text(
+        json.dumps({"pending": {key: vars(value) for key, value in state.pending.items()}, "sent": sorted(state.sent)}, indent=2),
+        encoding="utf-8",
+    )
     temporary.replace(path)
 
 
@@ -170,6 +200,32 @@ def open_time_after_bars(open_time: str, interval: str, bars: int) -> str:
     timestamp = datetime.fromisoformat(open_time.replace("Z", "+00:00"))
     seconds = interval_to_seconds(interval) * bars
     return datetime.fromtimestamp(timestamp.timestamp() + seconds, tz=timezone.utc).isoformat()
+
+
+def macd_alert_key(symbol: str, interval: str, divergence: Divergence) -> str:
+    return f"{symbol.upper()}:{interval.lower()}:macd_{divergence.kind}:{divergence.confirmation_time.isoformat()}"
+
+
+def pinbar_alert_key(symbol: str, interval: str, pinbar: PinBarSignal) -> str:
+    return f"{symbol.upper()}:{interval.lower()}:{pinbar.kind}:{pinbar.open_time.isoformat()}"
+
+
+def combo_alert_key(symbol: str, interval: str, pending: PendingDivergence, pinbar: PinBarSignal) -> str:
+    return f"{symbol.upper()}:{interval.lower()}:combo_{pending.kind}:{pending.confirmation_time}:{pinbar.open_time.isoformat()}"
+
+
+def fetch_with_retry(symbol: str, interval: str, config: MonitorConfig):
+    """Retry transient Binance errors before deferring to the next close."""
+    last_error: Exception | None = None
+    for attempt in range(config.api_retry_count):
+        try:
+            return fetch_futures_klines(symbol, interval, config.kline_limit)
+        except Exception as error:
+            last_error = error
+            if attempt + 1 < config.api_retry_count:
+                time.sleep(config.api_retry_delay_seconds * (attempt + 1))
+    assert last_error is not None
+    raise RuntimeError(f"Binance request failed after {config.api_retry_count} attempts ({last_error.__class__.__name__})") from last_error
 
 
 def send_telegram(message: str, config: MonitorConfig) -> None:
@@ -193,19 +249,40 @@ def process_latest_bar(
     interval: str,
     data,
     config: MonitorConfig,
-    state: dict[str, PendingDivergence],
-) -> str | None:
-    """Process one new closed bar and return a combo message only when confirmed."""
+    state: MonitorState,
+) -> list[tuple[str, str]]:
+    """Return standalone and/or combo alerts for the newest closed bar."""
     macd_data = add_indicators(data, DetectorConfig())
     divergence = signal_on_latest_closed_candle(macd_data, DetectorConfig())
     pinbar = detect_latest_pinbar(data, PinBarConfig())
+    alerts: list[tuple[str, str]] = []
+
+    if config.alert_mode in {"separate", "both"}:
+        if divergence:
+            alerts.append((
+                macd_alert_key(symbol, interval, divergence),
+                f"{symbol} {interval} MACD divergence\n{format_signal(divergence, config.display_timezone)}",
+            ))
+        if pinbar:
+            pinbar_time = pinbar.open_time.to_pydatetime().astimezone(ZoneInfo(config.display_timezone)).strftime("%Y-%m-%d %H:%M")
+            alerts.append((
+                pinbar_alert_key(symbol, interval, pinbar),
+                f"{symbol} {interval} {pinbar.kind}\n"
+                f"candle={pinbar_time} {config.display_timezone}\n"
+                f"O={pinbar.open:.6g} H={pinbar.high:.6g} L={pinbar.low:.6g} C={pinbar.close:.6g}\n"
+                f"range={pinbar.range_pct:.2%} upper_wick={pinbar.upper_wick:.6g} lower_wick={pinbar.lower_wick:.6g}",
+            ))
+
+    if config.alert_mode not in {"combined", "both"}:
+        return alerts
+
     latest_open = data.iloc[-1]["open_time"].to_pydatetime().astimezone(timezone.utc).isoformat()
     key = state_key(symbol, interval)
-    pending = state.get(key)
+    pending = state.pending.get(key)
 
     # Expire old pending divergence before examining this bar.
     if pending and latest_open > pending.expires_after_open_time:
-        state.pop(key, None)
+        state.pending.pop(key, None)
         pending = None
 
     # A just-triggered divergence can be confirmed by the same candle or by a
@@ -219,7 +296,7 @@ def process_latest_bar(
             config.pinbar_max_bars_after_divergence,
         )
         pending = PendingDivergence(kind, divergence.confirmation_time.isoformat(), expires, description)
-        state[key] = pending
+        state.pending[key] = pending
 
     if pending and compatible(pending.kind, pinbar):
         pinbar_time = pinbar.open_time.to_pydatetime().astimezone(ZoneInfo(config.display_timezone)).strftime("%Y-%m-%d %H:%M")
@@ -228,29 +305,35 @@ def process_latest_bar(
             f"{pending.description}\n"
             f"pinbar={pinbar.kind} at {pinbar_time} {config.display_timezone}"
         )
-        state.pop(key, None)  # A signal is consumed once: no duplicate alert.
-        return message
-    return None
+        state.pending.pop(key, None)  # A signal is consumed once: no duplicate alert.
+        alerts.append((combo_alert_key(symbol, interval, pending, pinbar), message))
+    return alerts
 
 
-def check_one(symbol: str, interval: str, config: MonitorConfig, state: dict[str, PendingDivergence]) -> None:
+def check_one(symbol: str, interval: str, config: MonitorConfig, state: MonitorState) -> None:
     try:
-        data = fetch_futures_klines(symbol, interval, config.kline_limit)
+        data = fetch_with_retry(symbol, interval, config)
         if len(data) < 20:
             raise RuntimeError("Not enough completed candles returned by Binance")
-        message = process_latest_bar(symbol, interval, data, config, state)
+        alerts = process_latest_bar(symbol, interval, data, config, state)
         prefix = f"[{datetime.now(ZoneInfo(config.display_timezone)):%Y-%m-%d %H:%M:%S}] {symbol} {interval}"
-        if message:
+        if not alerts:
+            print(f"{prefix} no new signal", flush=True)
+        for alert_key, message in alerts:
+            if alert_key in state.sent:
+                print(f"{prefix} duplicate signal skipped", flush=True)
+                continue
             print(f"{prefix} {message.replace(chr(10), ' | ')}", flush=True)
             send_telegram(message, config)
-        else:
-            print(f"{prefix} no new MACD + Pin Bar confirmation", flush=True)
+            state.sent.add(alert_key)
+        if len(state.sent) > 10_000:
+            state.sent = set(sorted(state.sent)[-5_000:])
     except Exception as error:
         # Keep checking all other markets. Telegram errors omit the token.
         print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {symbol} {interval} ERROR: {error}", flush=True)
 
 
-def run_checks(config: MonitorConfig, state: dict[str, PendingDivergence]) -> None:
+def run_checks(config: MonitorConfig, state: MonitorState) -> None:
     for symbol in config.symbols:
         for interval in config.intervals:
             check_one(symbol, interval, config, state)
@@ -262,7 +345,7 @@ def run_monitor(config: MonitorConfig) -> None:
     due_at = {task: next_check_time(task[1], config.close_delay_minutes) for task in tasks}
     state = load_state(config.state_file)
     print(
-        f"Monitoring MACD + Pin Bar: symbols={','.join(config.symbols)} intervals={','.join(config.intervals)} "
+        f"Monitoring mode={config.alert_mode}: symbols={','.join(config.symbols)} intervals={','.join(config.intervals)} "
         f"delay={config.close_delay_minutes}m pinbar_window={config.pinbar_max_bars_after_divergence} bars",
         flush=True,
     )
@@ -280,7 +363,7 @@ def run_monitor(config: MonitorConfig) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Monitor MACD divergence confirmed by a matching pin bar.")
+    parser = argparse.ArgumentParser(description="Monitor standalone and combined MACD-divergence / Pin-Bar signals.")
     parser.add_argument("--env", default=".env", help="Path to monitor settings (default: .env)")
     parser.add_argument("--once", action="store_true", help="Check the latest closed candle once, then exit")
     args = parser.parse_args()

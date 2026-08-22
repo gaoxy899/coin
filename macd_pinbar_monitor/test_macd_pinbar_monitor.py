@@ -6,7 +6,7 @@ import sys
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from macd_pinbar_monitor import PendingDivergence, compatible, load_state, open_time_after_bars, save_state, state_key
+from macd_pinbar_monitor import MonitorState, PendingDivergence, compatible, load_state, open_time_after_bars, save_state, state_key
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pinbar_detector"))
 from pinbar_detector import PinBarSignal
 
@@ -24,7 +24,10 @@ def test_requires_matching_direction() -> None:
 
 def test_pending_state_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "state.json"
-    state = {state_key("solusdt", "1h"): PendingDivergence("bullish", "2026-08-13T00:00:00+00:00", "2026-08-13T02:00:00+00:00", "signal")}
+    state = MonitorState(
+        {state_key("solusdt", "1h"): PendingDivergence("bullish", "2026-08-13T00:00:00+00:00", "2026-08-13T02:00:00+00:00", "signal")},
+        {"SOLUSDT:1h:bullish_pinbar:2026-08-13T02:00:00+00:00"},
+    )
     save_state(path, state)
     assert load_state(path) == state
 

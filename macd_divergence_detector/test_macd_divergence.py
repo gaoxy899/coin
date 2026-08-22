@@ -14,6 +14,7 @@ from macd_divergence import (
     MonitorConfig,
     send_telegram_message,
     signal_on_latest_closed_candle,
+    format_signal,
     simulate_historical_as_of,
     simulate_historical_at_time,
 )
@@ -100,10 +101,22 @@ def test_price_led_bullish_divergence_after_a_golden_cross() -> None:
 
 
 def test_latest_divergence_returns_only_the_most_recent_requested_direction() -> None:
-    early = Divergence("bullish", pd.Timestamp("2026-01-01", tz="UTC"), pd.Timestamp("2026-01-02", tz="UTC"), 1, 0.9, -2, -1, 24, pd.Timestamp("2026-01-02", tz="UTC"), pd.Timestamp("2026-01-01 12:00", tz="UTC"))
-    latest = Divergence("bearish", pd.Timestamp("2026-01-03", tz="UTC"), pd.Timestamp("2026-01-04", tz="UTC"), 1, 1.1, 2, 1, 24, pd.Timestamp("2026-01-04", tz="UTC"), pd.Timestamp("2026-01-04", tz="UTC"))
+    early = Divergence("bullish", pd.Timestamp("2026-01-01", tz="UTC"), pd.Timestamp("2026-01-02", tz="UTC"), pd.Timestamp("2026-01-01", tz="UTC"), pd.Timestamp("2026-01-02", tz="UTC"), 1, 0.9, -2, -1, 24, pd.Timestamp("2026-01-02", tz="UTC"), pd.Timestamp("2026-01-01 12:00", tz="UTC"))
+    latest = Divergence("bearish", pd.Timestamp("2026-01-03", tz="UTC"), pd.Timestamp("2026-01-04", tz="UTC"), pd.Timestamp("2026-01-03", tz="UTC"), pd.Timestamp("2026-01-04", tz="UTC"), 1, 1.1, 2, 1, 24, pd.Timestamp("2026-01-04", tz="UTC"), pd.Timestamp("2026-01-04", tz="UTC"))
     assert latest_divergence([early, latest]) == latest
     assert latest_divergence([early, latest], "bullish") == early
+
+
+def test_output_labels_price_and_green_macd_extreme_times_separately() -> None:
+    signal = Divergence(
+        "bullish", pd.Timestamp("2026-08-07 16:00", tz="UTC"), pd.Timestamp("2026-08-11 12:00", tz="UTC"),
+        pd.Timestamp("2026-08-07 20:00", tz="UTC"), pd.Timestamp("2026-08-11 12:00", tz="UTC"),
+        1.012, 0.9886, -0.0127671, -0.0100345, 23,
+        pd.Timestamp("2026-08-12", tz="UTC"), pd.Timestamp("2026-08-12", tz="UTC"),
+    )
+    text = format_signal(signal, "Asia/Taipei")
+    assert "price_extreme=2026-08-08 00:00" in text
+    assert "green_MACD_extreme=2026-08-08 04:00" in text
 
 
 def test_live_check_does_not_repeat_a_historical_divergence() -> None:
