@@ -8,6 +8,9 @@
 # Managed as an independent Git repository
 /binance-dashboard/
 
+# Managed as an independent Git repository
+/gcp-macd-pinbar/
+
 # Python bytecode
 **/__pycache__/
 *.pyc
