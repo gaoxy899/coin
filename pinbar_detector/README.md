@@ -10,6 +10,74 @@ pip install -r requirements.txt
 python3 pinbar_detector.py --symbol ETHUSDT --interval 1h
 ```
 
+## 常驻 Pin Bar 监测
+
+`main.py` 是独立的监测入口，不修改 `pinbar_detector.py` 内的检测规则。复制
+[`.env.example`](.env.example) 为 `.env`，设置币种、周期及 Telegram 后，默认检查一次最新已收盘 K 线并退出：
+
+```bash
+python3 main.py
+```
+
+需要常驻、在每次收盘后自动检查时，使用：
+
+```bash
+python3 main.py --monitor
+```
+
+## Ubuntu 计划任务（cron）
+
+由于 `python3 main.py` 默认只检查一次并退出，适合由 cron 在每次收盘后的延迟分钟启动。`--interval` 会只覆盖本次运行的 `INTERVALS`，而 `--symbol` 可选地只覆盖本次运行的 `SYMBOLS`：
+
+```bash
+# 仅检查 .env 中全部币种的 1h 最新已收盘 K 线
+python3 /opt/pinbar_detector/main.py --interval 1h
+
+# 仅检查 ETHUSDT 的 4h 最新已收盘 K 线
+python3 /opt/pinbar_detector/main.py --symbol ETHUSDT --interval 4h
+```
+
+例如 `.env` 设置 `CLOSE_DELAY_MINUTES=1` 时，编辑 `crontab -e`，加入：
+
+```cron
+# 每个 15 分钟 K 线收盘后的第 1 分钟：01、16、31、46 分检查 15m
+1,16,31,46 * * * * /usr/bin/python3 /opt/pinbar_detector/main.py --interval 15m >> /var/log/pinbar-monitor.log 2>&1
+
+# 每小时的第 1 分钟：检查 1h
+1 * * * * /usr/bin/python3 /opt/pinbar_detector/main.py --interval 1h >> /var/log/pinbar-monitor.log 2>&1
+
+# 每 4 小时的第 1 分钟：检查 4h
+1 */4 * * * /usr/bin/python3 /opt/pinbar_detector/main.py --interval 4h >> /var/log/pinbar-monitor.log 2>&1
+```
+
+将 `/opt/pinbar_detector` 换成实际目录，且让 cron 所用用户具备 `.env` 与状态文件的读写权限。若改变 `CLOSE_DELAY_MINUTES`，相应修改 cron 的分钟数；cron 模式不会自行等待延迟。
+
+`15m`、`1h`、`4h` 都可写入 `INTERVALS` 或通过 `--interval` 指定。默认 `CLOSE_DELAY_MINUTES=1` 时，15m 在 `:01`、`:16`、`:31`、`:46` 检查刚收盘的 K 线；1h 在每个整点后的第 1 分钟检查；4h 在 `00:01`、`04:01`、`08:01`（UTC 对齐，东八区同为 `08:01`、`12:01`、`16:01`）检查。每个 `SYMBOLS × INTERVALS` 组合独立检测，发现 Pin Bar 就单独发送 Telegram；同一根 K 线会由既有状态文件去重。
+
+配置中的主要项目：
+
+- `SYMBOLS=BTCUSDT,ETHUSDT`、`INTERVALS=1h,4h`：可同时监测多个币种和周期。
+- `CHECK_ON_START=false`：默认仅等下一次收盘检查，避免程序重启时补发旧信号；设为 `true` 才会在启动时检查最近一根已收线 K 线。
+- `API_RETRY_COUNT=3`、`API_RETRY_DELAY_SECONDS=2`：Binance 临时请求失败时重试，单个品种失败不会停止其余监测。
+- `PINBAR_*`：可从 `.env` 调整 Pin Bar 筛选条件；未配置时采用当前默认规则。
+
+如本机运行 iPhone 通知转发服务，可额外启用：
+
+```dotenv
+IPHONE_ENABLED=true
+IPHONE_NOTIFICATION_URL=http://127.0.0.1:8080/gaVimNrvTu6f6NDgsLvDcH
+```
+
+它与 Telegram 独立：任一服务失败不会阻止另一服务或下一次 K 线检查；同一信号也会使用 `IPHONE_STATE_FILE` 去重。
+
+部署前可不发消息地测试一次：
+
+```bash
+python3 main.py --no-notify
+```
+
+也可指定其他配置文件：`python3 main.py --env /path/to/pinbar.env`。
+
 ## Telegram 单独 Pin Bar 通知
 
 单独的 Pin Bar 检测也支持 Telegram，不需要 MACD 背离确认。复制 [`.env.example`](.env.example) 为 `.env`，然后填写：
