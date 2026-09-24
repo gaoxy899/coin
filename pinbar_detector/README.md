@@ -1,6 +1,6 @@
-# Binance Pin Bar 工具 + IFVG/FVG 检测
+# Binance Pin Bar 工具 + FVG 检测
 
-原有 Pin Bar 检测工具中新增独立的 IFVG → FVG 形态检测，使用 Binance USD-M 永续合约 K 线，默认只检查最新一根已收线 K 线。默认只输出 Pin Bar；传入 `--detect-ifvg-fvg` 才额外输出独立的 IFVG → FVG 结果，两者互不作为过滤条件。
+原有 Pin Bar 检测工具中新增独立的 FVG 形态检测，使用 Binance USD-M 永续合约 K 线，默认只检查最新一根已收线 K 线。默认只输出 Pin Bar；传入 `--detect-fvg` 才额外输出独立的 FVG 结果，两者互不作为过滤条件。
 
 ```bash
 cd /Users/gaoxy/dev/cloudflare/pinbar_detector
@@ -106,32 +106,26 @@ Bot Token 是密钥，只能放在 `.env`，不要写入代码或提交到 Git�
 - 看涨 K 线收盘必须位于整根振幅的上方 40%（即从低点起至少 60%），且低点为前 12 根 K 线中的最低点；看跌条件对称（收盘下方 40%、高点为前 12 根最高点）。
 - 不使用成交量确认。
 
-IFVG → FVG 确认规则（与 Pin Bar 无关）：
+FVG 确认规则（与 Pin Bar 无关）：
 
-1. 看跌：先有看涨 FVG；一根 K 线**收盘跌破其下边界**后，它成为看跌 IFVG（压力）；随后最多 8 根 K 线内形成看跌 FVG，输出 `bearish_ifvg_fvg`。
-2. 看涨：先有看跌 FVG；一根 K 线**收盘突破其上边界**后，它成为看涨 IFVG（支撑）；随后最多 8 根 K 线内形成看涨 FVG，输出 `bullish_ifvg_fvg`。
-3. FVG 使用三根 K 线的实体（`Open/Close`）计算，影线可以重叠：第三根实体下沿高于第一根实体上沿为看涨 FVG；第三根实体上沿低于第一根实体下沿为看跌 FVG。
-4. FVG 的中间位移 K 线与第 3 根确认 K 线，其实体都必须至少为前一 ATR(14) 的 0.25 倍，过滤十字星与弱实体。
-5. IFVG 与后续 FVG 的上下宽度均须至少为价格的 0.15%，且至少为前一 ATR(14) 的 0.20 倍，过滤过窄区间。
+1. FVG 使用三根 K 线的实体（`Open/Close`）计算，影线可以重叠：第三根实体下沿高于第一根实体上沿为看涨 FVG；第三根实体上沿低于第一根实体下沿为看跌 FVG。
+2. 看涨 FVG 开始前的 5 根 K 线中，最低 `Low` 必须等于该 FVG 开始前回看 96 根 K 线的最低 `Low`；看跌 FVG 对称，5 根 K 线中的最高 `High` 必须等于回看 96 根 K 线最高 `High`。极值判断包含影线。
+3. FVG 第 1、3 根实体都必须至少为前一 ATR(14) 的 0.10 倍；第 2 根（中间位移 K 线）必须至少为前一 ATR(14) 的 0.25 倍。可用 `--min-fvg-outer-body-atr` 与 `--min-fvg-middle-body-atr` 分别调整。
+4. FVG 的上下宽度均须至少为价格的 0.15%，且至少为前一 ATR(14) 的 0.20 倍，过滤过窄区间。
 
 可按品种和周期调节宽度与确认窗口：
 
 ```bash
 python3 pinbar_detector.py --symbol ETHUSDT --interval 1h \
-  --min-fvg-width-pct 0.002 --min-fvg-width-atr 0.25 --min-fvg-body-atr 0.30 \
-  --fvg-max-bars-after-ifvg 8
+  --detect-fvg \
+  --min-fvg-width-pct 0.002 --min-fvg-width-atr 0.25 \
+  --min-fvg-outer-body-atr 0.10 --min-fvg-middle-body-atr 0.30
 ```
 
-只测试 IFVG → FVG、隐藏 Pin Bar 输出时，加上 `--only-ifvg-fvg`：
+同时检测 Pin Bar 和 FVG：
 
 ```bash
-python3 pinbar_detector.py --symbol ETHUSDT --interval 1h --only-ifvg-fvg
-```
-
-同时检测 Pin Bar 和 IFVG → FVG：
-
-```bash
-python3 pinbar_detector.py --symbol ETHUSDT --interval 1h --detect-ifvg-fvg
+python3 pinbar_detector.py --symbol ETHUSDT --interval 1h --detect-fvg
 ```
 
 历史截图验证可回退最近 K 线：

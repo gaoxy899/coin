@@ -7,7 +7,7 @@ from pinbar_detector import (
     PinBarSignal,
     detect_fvg_at,
     detect_latest_pinbar,
-    detect_latest_ifvg_fvg,
+    detect_latest_fvg,
     detect_pinbar,
     format_pinbar_signal,
     load_notification_state,
@@ -133,7 +133,7 @@ def test_latest_filter_rejects_range_smaller_than_prior_atr() -> None:
     assert detect_latest_pinbar(data) is None
 
 
-def _ifvg_fvg_frame() -> pd.DataFrame:
+def _fvg_frame() -> pd.DataFrame:
     """Bearish body-FVG setup with overlapping shadows."""
     candles = [{"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.2}] * 20
     candles += [
@@ -143,7 +143,7 @@ def _ifvg_fvg_frame() -> pd.DataFrame:
         {"open": 104.0, "high": 106.0, "low": 103.0, "close": 105.0},
         # Recent 12-candle high: body=1, upper shadow=8, lower shadow=1.
         {"open": 104.0, "high": 112.0, "low": 102.0, "close": 103.0},
-        # This close below 101 converts the old bullish FVG into bearish IFVG.
+        # This candle is part of the subsequent bearish body FVG.
         {"open": 103.0, "high": 104.0, "low": 100.0, "close": 100.5},
         {"open": 101.0, "high": 102.0, "low": 99.0, "close": 99.5},
         # The body high (99) remains below candle -3's body low (100.5).
@@ -155,7 +155,7 @@ def _ifvg_fvg_frame() -> pd.DataFrame:
 
 
 def test_fvg_uses_bodies_allows_wick_overlap_and_enforces_minimum_width() -> None:
-    data = _ifvg_fvg_frame()
+    data = _fvg_frame()
     data["prior_atr"] = 2.0
     config = PinBarConfig(min_fvg_width_pct=0.005, min_fvg_width_atr=0.2)
     fvg = detect_fvg_at(data, len(data) - 1, config)
@@ -164,47 +164,66 @@ def test_fvg_uses_bodies_allows_wick_overlap_and_enforces_minimum_width() -> Non
     assert (fvg.lower, fvg.upper) == (99.0, 100.5)
 
     assert detect_fvg_at(data, len(data) - 1, PinBarConfig(min_fvg_width_pct=0.02)) is None
-    assert detect_fvg_at(data, len(data) - 1, PinBarConfig(min_fvg_qualifying_body_atr=1.0)) is None
+    assert detect_fvg_at(data, len(data) - 1, PinBarConfig(min_fvg_middle_body_atr=1.0)) is None
 
 
-def test_confirms_bearish_ifvg_then_later_fvg_without_pinbar() -> None:
-    data = _ifvg_fvg_frame()
-    # This was the pin bar in the drawing, but the IFVG/FVG result must not
-    # depend on its geometry or on it being a recent high.
-    data.loc[len(data) - 4, ["open", "high", "low", "close"]] = [104.0, 108.0, 102.0, 106.0]
-    result = detect_latest_ifvg_fvg(data)
-    assert result is not None
-    assert result.kind == "bearish_ifvg_fvg"
-    assert result.ifvg.kind == "bullish_fvg"
-    assert (result.ifvg.lower, result.ifvg.upper) == (101.0, 104.0)
-    assert result.fvg.kind == "bearish_fvg"
+def test_fvg_atr_body_filters_use_outer_and_middle_thresholds() -> None:
+    data = _fvg_frame()
+    data["prior_atr"] = 2.0
+    # Keep the bearish body gap. Outer bodies are 0.21 (> 0.10 * ATR),
+    # while the middle displacement body remains 1.5 (> 0.25 * ATR).
+    data.loc[len(data) - 3, ["open", "close"]] = [100.71, 100.5]
+    data.loc[len(data) - 1, ["open", "high", "close"]] = [99.21, 99.3, 99.0]
+    assert detect_fvg_at(data, len(data) - 1) is not None
+    data.loc[len(data) - 1, ["open", "high", "close"]] = [99.19, 99.3, 99.0]
+    assert detect_fvg_at(data, len(data) - 1) is None
 
 
-def test_confirms_bullish_ifvg_then_later_fvg() -> None:
-    candles = [{"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.2}] * 20
-    candles += [
-        # The first and third bodies form a bearish FVG [96, 99].
-        {"open": 100.0, "high": 101.0, "low": 98.0, "close": 99.0},
-        {"open": 99.0, "high": 99.5, "low": 95.0, "close": 96.0},
-        {"open": 96.0, "high": 97.0, "low": 94.0, "close": 95.0},
-        # Close above 99 converts it to a bullish IFVG.
-        {"open": 95.0, "high": 101.0, "low": 94.0, "close": 100.0},
-        {"open": 100.0, "high": 102.0, "low": 98.0, "close": 101.0},
-        # The low (101) remains above candle -3's high (100): bullish FVG.
-        {"open": 101.0, "high": 104.0, "low": 101.0, "close": 103.0},
-    ]
+def _extreme_fvg_frame(kind: str) -> pd.DataFrame:
+    """Build 96 pre-FVG candles, with the five-bar extreme near the FVG."""
+    candles = [{"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.2}] * 96
+    if kind == "bullish":
+        # The 5 bars immediately before the FVG hold the 96-bar low.
+        candles[93] = {"open": 92.0, "high": 93.0, "low": 90.0, "close": 91.0}
+        candles += [
+            {"open": 100.0, "high": 102.0, "low": 99.0, "close": 101.0},
+            {"open": 101.0, "high": 105.0, "low": 100.0, "close": 104.0},
+            {"open": 104.0, "high": 106.0, "low": 103.0, "close": 105.0},
+        ]
+    else:
+        # The 5 bars immediately before the FVG hold the 96-bar high.
+        candles[93] = {"open": 108.0, "high": 110.0, "low": 107.0, "close": 109.0}
+        candles += [
+            {"open": 100.0, "high": 101.0, "low": 98.0, "close": 99.0},
+            {"open": 99.0, "high": 100.0, "low": 95.0, "close": 96.0},
+            {"open": 96.0, "high": 97.0, "low": 94.0, "close": 95.0},
+        ]
     data = pd.DataFrame(candles)
     data.insert(0, "open_time", pd.date_range("2026-08-12", periods=len(data), freq="h", tz="UTC"))
-    result = detect_latest_ifvg_fvg(data)
+    return data
+
+
+def test_confirms_bullish_fvg_after_five_bar_96_bar_low() -> None:
+    result = detect_latest_fvg(_extreme_fvg_frame("bullish"))
     assert result is not None
-    assert result.kind == "bullish_ifvg_fvg"
-    assert (result.ifvg.lower, result.ifvg.upper) == (96.0, 99.0)
-    assert result.fvg.kind == "bullish_fvg"
+    assert result.kind == "bullish_fvg"
+    assert (result.lower, result.upper) == (101.0, 104.0)
 
 
-def test_rejects_fvg_that_forms_before_ifvg_inversion() -> None:
-    data = _ifvg_fvg_frame()
-    # Keep the potential bearish FVG, but do not close through the earlier
-    # bullish FVG until the FVG's first candle, which is too late to confirm.
-    data.loc[len(data) - 3, "close"] = 102.0
-    assert detect_latest_ifvg_fvg(data) is None
+def test_confirms_bearish_fvg_after_five_bar_96_bar_high() -> None:
+    result = detect_latest_fvg(_extreme_fvg_frame("bearish"))
+    assert result is not None
+    assert result.kind == "bearish_fvg"
+    assert (result.lower, result.upper) == (96.0, 99.0)
+
+
+def test_rejects_bullish_fvg_when_96_bar_low_is_not_in_previous_five_bars() -> None:
+    data = _extreme_fvg_frame("bullish")
+    data.loc[50, "low"] = 89.0
+    assert detect_latest_fvg(data) is None
+
+
+def test_rejects_bearish_fvg_when_96_bar_high_is_not_in_previous_five_bars() -> None:
+    data = _extreme_fvg_frame("bearish")
+    data.loc[50, "high"] = 111.0
+    assert detect_latest_fvg(data) is None

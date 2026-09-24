@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Detect bullish and bearish pin bars from Binance USD-M futures candles.
+"""Detect Pin Bars and optional body FVGs from Binance USD-M futures candles.
 
 By default only the newest completed candle is evaluated.  This makes the
 script suitable for a scheduled run immediately after a candle closes.
@@ -38,15 +38,16 @@ class PinBarConfig:
     close_end_zone_ratio: float = 0.40
     context_lookback: int = 12
     atr_period: int = 14
-    # IFVG/FVG confirmation settings. A percentage floor makes the rule work
+    # FVG settings. A percentage floor makes the rule work
     # on instruments with very different prices; the ATR floor filters gaps
-    # that are visually tiny for the current volatility. The displacement and
-    # confirmation candles must also have meaningful bodies.
+    # that are visually tiny for the current volatility. Outer FVG candles
+    # need a modest body; the middle displacement candle needs a larger one.
     min_fvg_width_pct: float = 0.0015
     min_fvg_width_atr: float = 0.20
-    min_fvg_qualifying_body_atr: float = 0.25
-    source_fvg_lookback: int = 16
-    fvg_max_bars_after_ifvg: int = 8
+    min_fvg_outer_body_atr: float = 0.10 #第 1、3根 FVG K 线实体：≥ 0.10 ATR
+    min_fvg_middle_body_atr: float = 0.25 #第 2 根 FVG K 线实体：≥ 0.25 ATR
+    fvg_extreme_lookback: int = 96 #向前回看 96 根 K 线
+    fvg_extreme_recent_bars: int = 5 #开始前紧邻的 5 根 K 线
 
 
 @dataclass(frozen=True)
@@ -75,16 +76,6 @@ class FairValueGap:
     upper: float
     width: float
     width_pct: float
-
-
-@dataclass(frozen=True)
-class IFVGFVGSignal:
-    """An IFVG reversal confirmed by a later same-direction FVG."""
-
-    kind: Literal["bearish_ifvg_fvg", "bullish_ifvg_fvg"]
-    ifvg: FairValueGap
-    ifvg_inversion_time: pd.Timestamp
-    fvg: FairValueGap
 
 
 @dataclass(frozen=True)
@@ -303,9 +294,9 @@ def detect_fvg_at(
 
     Gap bounds use the first and third candle bodies, so ordinary upper/lower
     shadows may overlap. A bullish FVG has the third body entirely above the
-    first body; a bearish FVG has it entirely below. The middle displacement
-    candle and the third confirming candle must both meet the configured
-    minimum body size relative to their preceding ATR.
+    first body; a bearish FVG has it entirely below. The first and third FVG
+    bodies must meet the outer-body ATR threshold, while the second (middle)
+    displacement body must meet the middle-body ATR threshold.
     """
     if right_index < 2 or right_index >= len(data):
         return None
@@ -331,11 +322,15 @@ def detect_fvg_at(
         return None
     if pd.notna(prior_atr) and width < config.min_fvg_width_atr * float(prior_atr):
         return None
-    for candle in (middle, right):
-        candle_atr = candle.get("prior_atr", float("nan"))
-        body = abs(float(candle["close"]) - float(candle["open"]))
-        if pd.notna(candle_atr) and body < config.min_fvg_qualifying_body_atr * float(candle_atr):
+    for candle in (left, right):
+        outer_atr = candle.get("prior_atr", float("nan"))
+        outer_body = abs(float(candle["close"]) - float(candle["open"]))
+        if pd.notna(outer_atr) and outer_body < config.min_fvg_outer_body_atr * float(outer_atr):
             return None
+    middle_atr = middle.get("prior_atr", float("nan"))
+    middle_body = abs(float(middle["close"]) - float(middle["open"]))
+    if pd.notna(middle_atr) and middle_body < config.min_fvg_middle_body_atr * float(middle_atr):
+        return None
     return FairValueGap(
         kind=kind,
         left_time=left["open_time"],
@@ -348,70 +343,36 @@ def detect_fvg_at(
     )
 
 
-def _find_ifvg_before_confirmation(
-    data: pd.DataFrame,
-    confirmation_index: int,
-    expected_kind: Literal["bullish_fvg", "bearish_fvg"],
-    config: PinBarConfig,
-) -> tuple[FairValueGap, int] | None:
-    """Find a prior FVG that became an IFVG before the final FVG starts."""
-    first_fvg_end = max(2, confirmation_index - config.source_fvg_lookback)
-    for fvg_end in range(confirmation_index - 3, first_fvg_end - 1, -1):
-        fvg = detect_fvg_at(data, fvg_end, config)
-        if fvg is None or fvg.kind != expected_kind:
-            continue
-        # A wick may enter the zone; only a close through its far edge turns
-        # an FVG into an IFVG. The IFVG must exist before the final three-bar
-        # FVG begins, and the later FVG must arrive within its time window.
-        for inversion_index in range(fvg_end + 1, confirmation_index - 1):
-            close = float(data.iloc[inversion_index]["close"])
-            inverted = (
-                close < fvg.lower if expected_kind == "bullish_fvg" else close > fvg.upper
-            )
-            if inverted and confirmation_index - inversion_index <= config.fvg_max_bars_after_ifvg:
-                return fvg, inversion_index
-    return None
-
-
-def detect_latest_ifvg_fvg(
+def detect_latest_fvg(
     data: pd.DataFrame,
     config: PinBarConfig = PinBarConfig(),
-) -> IFVGFVGSignal | None:
-    """Confirm the final FVG as a continuation of a preceding IFVG.
+) -> FairValueGap | None:
+    """Detect an FVG whose preceding five bars set the 96-bar extreme.
 
-    Bearish confirmation is: a bullish FVG is closed below and becomes a
-    bearish IFVG (resistance), then a later bearish FVG forms. Bullish
-    confirmation is the exact mirror image. Pin Bar geometry and local
-    high/low rules are intentionally not examined here.
+    The five bars immediately before the three-candle FVG must contain the
+    lowest low of the preceding 96 bars for a bullish FVG, or the highest high
+    for a bearish FVG.  Extremes use wick highs/lows; the FVG itself uses
+    bodies, as defined by :func:`detect_fvg_at`.
     """
-    minimum_candles = max(config.context_lookback, config.atr_period) + 3
+    minimum_candles = config.fvg_extreme_lookback + 3
     if len(data) < minimum_candles:
-        raise ValueError(f"Need at least {minimum_candles} closed candles for IFVG/FVG confirmation")
+        raise ValueError(f"Need at least {minimum_candles} closed candles for FVG extreme filters")
     enriched = add_prior_atr(data, config.atr_period)
     final_index = len(enriched) - 1
-    confirming_fvg = detect_fvg_at(enriched, final_index, config)
-    if confirming_fvg is None:
+    fvg = detect_fvg_at(enriched, final_index, config)
+    if fvg is None:
         return None
-
-    original_fvg_kind: Literal["bullish_fvg", "bearish_fvg"]
-    signal_kind: Literal["bearish_ifvg_fvg", "bullish_ifvg_fvg"]
-    if confirming_fvg.kind == "bearish_fvg":
-        original_fvg_kind, signal_kind = "bullish_fvg", "bearish_ifvg_fvg"
-    else:
-        original_fvg_kind, signal_kind = "bearish_fvg", "bullish_ifvg_fvg"
-
-    inverted_fvg = _find_ifvg_before_confirmation(
-        enriched, final_index, original_fvg_kind, config
-    )
-    if inverted_fvg is None:
+    fvg_start = final_index - 2
+    five_start = fvg_start - config.fvg_extreme_recent_bars
+    five_end = fvg_start
+    lookback_start = fvg_start - config.fvg_extreme_lookback
+    if lookback_start < 0:
         return None
-    ifvg, inversion_index = inverted_fvg
-    return IFVGFVGSignal(
-        kind=signal_kind,
-        ifvg=ifvg,
-        ifvg_inversion_time=enriched.iloc[inversion_index]["open_time"],
-        fvg=confirming_fvg,
-    )
+    preceding_five = enriched.iloc[five_start:five_end]
+    lookback = enriched.iloc[lookback_start:fvg_start]
+    if fvg.kind == "bullish_fvg":
+        return fvg if preceding_five["low"].min() <= lookback["low"].min() else None
+    return fvg if preceding_five["high"].max() >= lookback["high"].max() else None
 
 
 def detect_latest_pinbar(data: pd.DataFrame, config: PinBarConfig = PinBarConfig()) -> PinBarSignal | None:
@@ -476,7 +437,7 @@ def select_historical_candle(data: pd.DataFrame, backtest_offset: int = 0, as_of
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Detect Pin Bars and independent IFVG → FVG confirmations."
+        description="Detect Pin Bars and optional independent FVG signals."
     )
     parser.add_argument("--symbol", default="SOLUSDT", help="USD-M perpetual symbol, e.g. SOLUSDT")
     parser.add_argument("--interval", default="1h", help="Binance interval, e.g. 1h or 4h")
@@ -492,37 +453,36 @@ def main() -> None:
     parser.add_argument("--as-of", help="Exact UTC candle open time, e.g. 2026-08-13T06:00:00Z")
     parser.add_argument(
         "--min-fvg-width-pct", type=float, default=PinBarConfig.min_fvg_width_pct,
-        help="Minimum IFVG/FVG width as a fraction of price (default: 0.0015 = 0.15%%)",
+        help="Minimum FVG width as a fraction of price (default: 0.0015 = 0.15%%)",
     )
     parser.add_argument(
         "--min-fvg-width-atr", type=float, default=PinBarConfig.min_fvg_width_atr,
-        help="Minimum IFVG/FVG width in prior ATR multiples (default: 0.20)",
+        help="Minimum FVG width in prior ATR multiples (default: 0.20)",
     )
     parser.add_argument(
-        "--min-fvg-body-atr", type=float, default=PinBarConfig.min_fvg_qualifying_body_atr,
-        help="Minimum middle/third FVG candle body in prior ATR multiples (default: 0.25)",
+        "--min-fvg-outer-body-atr", type=float, default=PinBarConfig.min_fvg_outer_body_atr,
+        help="Minimum first/third FVG candle body in prior ATR multiples (default: 0.10)",
     )
     parser.add_argument(
-        "--fvg-max-bars-after-ifvg", type=int, default=PinBarConfig.fvg_max_bars_after_ifvg,
-        help="Maximum bars from IFVG conversion to the confirming FVG (default: 8)",
+        "--min-fvg-middle-body-atr", type=float, default=PinBarConfig.min_fvg_middle_body_atr,
+        help="Minimum second FVG candle body in prior ATR multiples (default: 0.25)",
     )
     parser.add_argument(
-        "--only-ifvg-fvg", action="store_true",
-        help="Only print the independent IFVG → FVG result",
-    )
-    parser.add_argument(
-        "--detect-ifvg-fvg", action="store_true",
-        help="Also detect the independent IFVG → FVG pattern",
+        "--detect-fvg", action="store_true",
+        help="Also detect the independent FVG pattern",
     )
     args = parser.parse_args()
     if args.backtest_offset < 0:
         parser.error("--backtest-offset must be zero or greater")
     if args.as_of and args.backtest_offset:
         parser.error("Use either --backtest-offset or --as-of, not both")
-    if args.min_fvg_width_pct <= 0 or args.min_fvg_width_atr < 0 or args.min_fvg_body_atr < 0:
+    if (
+        args.min_fvg_width_pct <= 0
+        or args.min_fvg_width_atr < 0
+        or args.min_fvg_outer_body_atr < 0
+        or args.min_fvg_middle_body_atr < 0
+    ):
         parser.error("FVG width/body settings must be positive (ATR multiples may be zero)")
-    if args.fvg_max_bars_after_ifvg < 2:
-        parser.error("--fvg-max-bars-after-ifvg must be at least 2")
     try:
         telegram = load_telegram_config(args.env)
     except ValueError as error:
@@ -532,15 +492,15 @@ def main() -> None:
         PinBarConfig(),
         min_fvg_width_pct=args.min_fvg_width_pct,
         min_fvg_width_atr=args.min_fvg_width_atr,
-        min_fvg_qualifying_body_atr=args.min_fvg_body_atr,
-        fvg_max_bars_after_ifvg=args.fvg_max_bars_after_ifvg,
+        min_fvg_outer_body_atr=args.min_fvg_outer_body_atr,
+        min_fvg_middle_body_atr=args.min_fvg_middle_body_atr,
     )
     # ATR/context filters require sufficient candles before the tested candle.
     required_history = max(config.context_lookback, config.atr_period) + 1
-    if args.detect_ifvg_fvg or args.only_ifvg_fvg:
+    if args.detect_fvg:
         required_history = max(
             required_history,
-            config.atr_period + config.source_fvg_lookback + 4,
+            config.fvg_extreme_lookback + 3,
         )
     # For an exact historical timestamp Binance needs enough data to include
     # it, so request the normal analysis window rather than just two candles.
@@ -553,39 +513,38 @@ def main() -> None:
     candle_position = int(data.index[data["open_time"] == candle["open_time"]][0])
     selected_data = data.iloc[:candle_position + 1].reset_index(drop=True)
     print(f"symbol={args.symbol.upper()} interval={args.interval} candle={candle.open_time:%Y-%m-%d %H:%M} UTC")
-    if not args.only_ifvg_fvg:
-        pinbar_signal = detect_latest_pinbar(selected_data, config)
-        if pinbar_signal:
-            signal_text = (
-                f"{pinbar_signal.kind} | O={pinbar_signal.open:.6g} H={pinbar_signal.high:.6g} "
-                f"L={pinbar_signal.low:.6g} C={pinbar_signal.close:.6g} | "
-                f"range={pinbar_signal.range_pct:.2%} body={pinbar_signal.body:.6g} "
-                f"upper_wick={pinbar_signal.upper_wick:.6g} lower_wick={pinbar_signal.lower_wick:.6g}"
-            )
-            print(signal_text)
-            # Historical probes must never alert a real Telegram chat.  For a
-            # normal run this is the newest completed K line, deduplicated by
-            # symbol, interval, direction and candle open time.
-            if args.as_of is None and args.backtest_offset == 0 and not args.no_notify:
-                try:
-                    if notify_pinbar_once(args.symbol, args.interval, pinbar_signal, telegram):
-                        print("Telegram notification sent.")
-                    elif telegram.enabled:
-                        print("Telegram notification already sent for this candle.")
-                except RuntimeError as error:
-                    print(f"Telegram notification ERROR: {error}")
-        else:
-            print("No Pin Bar.")
-    if args.detect_ifvg_fvg or args.only_ifvg_fvg:
-        ifvg_fvg_signal = detect_latest_ifvg_fvg(selected_data, config)
-        if ifvg_fvg_signal:
+    pinbar_signal = detect_latest_pinbar(selected_data, config)
+    if pinbar_signal:
+        signal_text = (
+            f"{pinbar_signal.kind} | O={pinbar_signal.open:.6g} H={pinbar_signal.high:.6g} "
+            f"L={pinbar_signal.low:.6g} C={pinbar_signal.close:.6g} | "
+            f"range={pinbar_signal.range_pct:.2%} body={pinbar_signal.body:.6g} "
+            f"upper_wick={pinbar_signal.upper_wick:.6g} lower_wick={pinbar_signal.lower_wick:.6g}"
+        )
+        print(signal_text)
+        # Historical probes must never alert a real Telegram chat.  For a
+        # normal run this is the newest completed K line, deduplicated by
+        # symbol, interval, direction and candle open time.
+        if args.as_of is None and args.backtest_offset == 0 and not args.no_notify:
+            try:
+                if notify_pinbar_once(args.symbol, args.interval, pinbar_signal, telegram):
+                    print("Telegram notification sent.")
+                elif telegram.enabled:
+                    print("Telegram notification already sent for this candle.")
+            except RuntimeError as error:
+                print(f"Telegram notification ERROR: {error}")
+    else:
+        print("No Pin Bar.")
+    if args.detect_fvg:
+        fvg_signal = detect_latest_fvg(selected_data, config)
+        if fvg_signal:
             print(
-                f"{ifvg_fvg_signal.kind} | IFVG={ifvg_fvg_signal.ifvg.lower:.6g}-{ifvg_fvg_signal.ifvg.upper:.6g} "
-                f"inverted={ifvg_fvg_signal.ifvg_inversion_time:%Y-%m-%d %H:%M} UTC | "
-                f"FVG={ifvg_fvg_signal.fvg.lower:.6g}-{ifvg_fvg_signal.fvg.upper:.6g}"
+                f"{fvg_signal.kind} | FVG={fvg_signal.lower:.6g}-{fvg_signal.upper:.6g} | "
+                f"candles={fvg_signal.left_time:%Y-%m-%d %H:%M},"
+                f"{fvg_signal.middle_time:%H:%M},{fvg_signal.right_time:%H:%M} UTC"
             )
         else:
-            print("No IFVG → FVG confirmation.")
+            print("No FVG meeting the 5-bar/96-bar extreme filters.")
 
 
 if __name__ == "__main__":
