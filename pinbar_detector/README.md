@@ -25,6 +25,105 @@ python3 main.py
 python3 main.py --monitor
 ```
 
+## Docker / Cloady 部署
+
+本目录提供 `Dockerfile`、`docker-compose.yml` 和 `.dockerignore`，默认执行
+`python main.py --monitor` 常驻监测。检测规则保持不变，运行依赖单列在
+`requirements-runtime.txt`；镜像不安装 pytest，也不包含本机 `.env`、通知记录或测试文件。
+镜像内的 `docker.env` 仅提供无密钥默认配置，Cloady 环境变量会覆盖它。
+
+### 在 cloady.com 部署
+
+#### 直接使用 GHCR 镜像（无需上传源码或重新构建）
+
+镜像：`ghcr.io/gaoxy899/pinbar-detector:latest`，支持 `linux/amd64` 和 `linux/arm64`。
+将本目录的 [`docker-compose.ghcr.yml`](docker-compose.ghcr.yml) 单独拖入 Cloady 的部署入口，
+它会直接拉取镜像，并配置常驻进程及 `/data` 持久卷；部署前填写下面的环境变量。
+镜像没有 Web 服务，使用这份 Compose 配置部署，不使用默认要求 Web 端口的单镜像配置。
+
+本地也可直接启动：
+
+```bash
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
+docker compose -f docker-compose.ghcr.yml logs -f pinbar
+```
+
+GitHub Actions 的 [Publish Pin Bar image](https://github.com/gaoxy899/coin/actions/workflows/publish-pinbar.yml)
+会在 `main` 分支的本目录发生变更或手动运行时，先运行测试和容器启动检查，再发布镜像。
+除 `latest` 外，每次发布还提供 `sha-<完整提交SHA>` 固定版本标签。
+首次发布后需在 GitHub 包设置中将该镜像设为 Public，Cloady 才能无凭据拉取。
+认证及可见性规则见 [GHCR 官方说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。
+
+#### 从源码构建
+
+1. 上传整个 `pinbar_detector` 目录，或连接 GitHub 仓库并在 **Settings → Build**
+   将根目录设为 `pinbar_detector`。确保平台识别到本目录的 `docker-compose.yml`。
+   若保留仓库根目录，也可以设置
+   `CLOADY_COMPOSEFILE_PATH=pinbar_detector/docker-compose.yml`；其中 `build.context: .`
+   相对于 compose 文件所在目录。
+2. 在部署前的 **Environment** 中填写下面的变量；其他 `PINBAR_*`、重试、周期等配置
+   也可按 `.env.example` 设置。不要上传含真实密钥的 `.env`。
+3. 检查服务为 `pinbar`，持久卷 `pinbar-data` 挂载至 `/data`，保持单实例、常驻运行。
+   Compose 声明了 0.5 vCPU、512 MiB 内存上限；磁盘容量在平台按需设置。
+4. 部署后查看 Logs，正常启动会输出 `Monitoring Pin Bars: ...`。
+   默认 `CHECK_ON_START=false`，会等待下一次 K 线收盘后一分钟才开始检查。
+   修改平台环境变量后需要 **Redeploy** 才生效。
+
+```dotenv
+SYMBOLS=BTCUSDT,ETHUSDT
+INTERVALS=15m,1h,4h
+CLOSE_DELAY_MINUTES=1
+CHECK_ON_START=false
+TELEGRAM_ENABLED=true
+TELEGRAM_BOT_TOKEN=填写你的BotToken
+TELEGRAM_CHAT_ID=填写你的ChatID
+TELEGRAM_MENTION=@apm
+IPHONE_ENABLED=false
+```
+
+这是仅向外请求 Binance/通知服务的后台进程，**使用 Compose 部署，不设置 Web 端口**。
+Cloady 的单 Dockerfile 部署默认等待 3000 端口，而本程序没有 HTTP 服务。
+不要配置 `deploy.replicas: 0`，那是按 HTTP 请求唤醒的休眠模式，不适合定时监测。
+平台构建、端口、环境变量规则见
+[Cloady Core Concepts](https://cloady.com/docs/concepts)，休眠规则见
+[Serverless Functions](https://cloady.com/docs/functions)。
+
+通知去重文件固定存入 `/data`，需保留持久卷，且目录须允许 UID/GID `10001:10001` 写入。
+全新 Docker 命名卷会继承镜像目录权限；如果平台挂载后出现 `PermissionError`，在平台终端
+使用 root 将 `/data` 所有者设为 `10001:10001`。迁移旧通知记录时，将旧 JSON 文件分别复制为
+`/data/pinbar_telegram_state.json`、`/data/pinbar_iphone_state.json`。
+不要同时运行多个实例，现有 JSON 去重不提供跨进程锁。
+
+如需 iPhone 通知，将 `IPHONE_ENABLED=true` 并设置云端可访问的
+`IPHONE_NOTIFICATION_URL`。容器内 `127.0.0.1` 指向容器自身，不能直接访问你电脑的本机转发服务。
+
+### 本地 Docker 验证
+
+```bash
+cd /Users/gaoxy/dev/cloudflare/pinbar_detector
+cp .env.example .env
+# 编辑 .env；Compose 自动读取并传入上面声明的环境变量。
+docker compose build
+# 检查最近已收盘 K 线，不发通知。会请求 Binance。
+docker compose run --rm pinbar --once --no-notify
+docker compose up -d
+docker compose logs -f pinbar
+docker compose down
+```
+
+`docker compose down` 保留通知去重卷；不要加 `-v`，否则会删除去重记录。
+如直接使用 `docker run`，需自行传入环境变量并挂载命名卷，例如：
+
+```bash
+docker build -t pinbar-detector .
+docker run -d --name pinbar --restart unless-stopped \
+  --env-file .env \
+  -e TELEGRAM_STATE_FILE=/data/pinbar_telegram_state.json \
+  -e IPHONE_STATE_FILE=/data/pinbar_iphone_state.json \
+  -v pinbar-data:/data pinbar-detector
+```
+
 ## Ubuntu 计划任务（cron）
 
 由于 `python3 main.py` 默认只检查一次并退出，适合由 cron 在每次收盘后的延迟分钟启动。`--interval` 会只覆盖本次运行的 `INTERVALS`，而 `--symbol` 可选地只覆盖本次运行的 `SYMBOLS`：

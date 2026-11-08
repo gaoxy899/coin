@@ -1,0 +1,90 @@
+name: Publish Pin Bar image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - pinbar_detector/**
+      - .github/workflows/publish-pinbar.yml
+
+concurrency:
+  group: publish-pinbar
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Test detector
+        run: |
+          python -m pip install -r pinbar_detector/requirements.txt
+          python -m pytest -q pinbar_detector
+      - name: Build and smoke test runtime image
+        run: |
+          docker build -t pinbar-detector:test ./pinbar_detector
+          docker run --rm --entrypoint python pinbar-detector:test -c '
+          from pathlib import Path
+          from main import load_monitor_config
+          from pinbar_detector import save_notification_state, load_notification_state
+          config = load_monitor_config("/app/.env")
+          assert not config.telegram.enabled and not config.iphone.enabled
+          assert str(config.telegram.state_file).startswith("/data/")
+          path = Path("/data/smoke.json")
+          save_notification_state(path, {"smoke"})
+          assert load_notification_state(path) == {"smoke"}
+          path.unlink()
+          '
+          docker run -d --name pinbar-smoke pinbar-detector:test
+          for attempt in $(seq 1 30); do
+            if docker logs pinbar-smoke 2>&1 | grep -q 'Monitoring Pin Bars:'; then
+              break
+            fi
+            sleep 1
+          done
+          docker logs pinbar-smoke
+          test "$(docker inspect -f '{{.State.Running}}' pinbar-smoke)" = true
+          docker logs pinbar-smoke 2>&1 | grep -q 'Monitoring Pin Bars:'
+          docker stop pinbar-smoke
+          docker rm -v pinbar-smoke
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish amd64 / arm64
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./pinbar_detector
+          file: ./pinbar_detector/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/gaoxy899/pinbar-detector:latest
+            ghcr.io/gaoxy899/pinbar-detector:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/gaoxy899/coin
+            org.opencontainers.image.description=Binance USD-M Pin Bar monitor
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Record published image
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          echo '### Pin Bar image' >> "$GITHUB_STEP_SUMMARY"
+          echo 'ghcr.io/gaoxy899/pinbar-detector:latest' >> "$GITHUB_STEP_SUMMARY"
+          echo "Digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"

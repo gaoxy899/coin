@@ -1,0 +1,8 @@
+# Allow only the files required to build the image.
+**
+!Dockerfile
+!.dockerignore
+!requirements-runtime.txt
+!main.py
+!pinbar_detector.py
+!docker.env

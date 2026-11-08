@@ -1,0 +1,43 @@
+services:
+  pinbar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Keep one always-on worker: JSON notification state is not shared locking.
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+    environment:
+      SYMBOLS: ${SYMBOLS:-BTCUSDT,ETHUSDT}
+      INTERVALS: ${INTERVALS:-1h,4h}
+      CLOSE_DELAY_MINUTES: ${CLOSE_DELAY_MINUTES:-1}
+      KLINE_LIMIT: ${KLINE_LIMIT:-100}
+      CHECK_ON_START: ${CHECK_ON_START:-false}
+      API_RETRY_COUNT: ${API_RETRY_COUNT:-3}
+      API_RETRY_DELAY_SECONDS: ${API_RETRY_DELAY_SECONDS:-2}
+      PINBAR_MIN_RANGE_PCT: ${PINBAR_MIN_RANGE_PCT:-0.008}
+      PINBAR_MIN_RANGE_ATR: ${PINBAR_MIN_RANGE_ATR:-1.0}
+      PINBAR_MIN_MAIN_WICK_BODY_RATIO: ${PINBAR_MIN_MAIN_WICK_BODY_RATIO:-3.0}
+      PINBAR_MAX_OPPOSITE_WICK_BODY_RATIO: ${PINBAR_MAX_OPPOSITE_WICK_BODY_RATIO:-1.5}
+      PINBAR_MIN_BODY_RANGE_RATIO: ${PINBAR_MIN_BODY_RANGE_RATIO:-0.05}
+      PINBAR_CLOSE_END_ZONE_RATIO: ${PINBAR_CLOSE_END_ZONE_RATIO:-0.40}
+      PINBAR_CONTEXT_LOOKBACK: ${PINBAR_CONTEXT_LOOKBACK:-12}
+      PINBAR_ATR_PERIOD: ${PINBAR_ATR_PERIOD:-14}
+      TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-false}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_MENTION: ${TELEGRAM_MENTION:-}
+      TELEGRAM_STATE_FILE: /data/pinbar_telegram_state.json
+      IPHONE_ENABLED: ${IPHONE_ENABLED:-false}
+      IPHONE_NOTIFICATION_URL: ${IPHONE_NOTIFICATION_URL:-}
+      IPHONE_STATE_FILE: /data/pinbar_iphone_state.json
+    volumes:
+      - pinbar-data:/data
+    # No ports/expose: outbound-only monitoring, no HTTP server.
+
+volumes:
+  pinbar-data:
